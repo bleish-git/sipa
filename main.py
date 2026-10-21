@@ -1,6 +1,7 @@
 """SIPA v0.2 - Flet desktop UI; demonstration only, not production-ready."""
 import sys
 import json
+import traceback
 from pathlib import Path
 import flet as ft
 from database import init_database, engine, log
@@ -124,9 +125,9 @@ def main(page: ft.Page):
                 notify('Accesso non autorizzato a questo settore.', True)
                 return
             selected_section = index
-            render_navigation()
-            render_content()
-            page.update()
+            # Ricostruisce la vista intera: evita aggiornamenti incrementali
+            # su controlli che Flet potrebbe non avere ancora montato.
+            dashboard()
 
         def render_navigation():
             navigation.controls.clear()
@@ -149,6 +150,15 @@ def main(page: ft.Page):
             ])
             if selected_section == 5:
                 render_admin(content)
+            elif selected_section == 1:
+                try:
+                    render_attivita(content)
+                except Exception as exc:
+                    traceback.print_exc()
+                    content.controls.append(ft.Text(
+                        'Errore durante il caricamento delle attività economiche: '
+                        + f'{type(exc).__name__}: {exc}', color=ft.Colors.RED_700,
+                        selectable=True))
             elif selected_section == 0:
                 content.controls.append(ft.ResponsiveRow([
                     ft.Container(ft.Column([ft.Icon(ft.Icons.STOREFRONT_OUTLINED), ft.Text('Attività cessate', weight=ft.FontWeight.BOLD), ft.Text('Registro da implementare')]), padding=24, bgcolor=ft.Colors.BLUE_50, border_radius=12, col={'sm': 6}),
@@ -171,6 +181,119 @@ def main(page: ft.Page):
             ], expand=True))
         page.add(ft.Row([sidebar, ft.Container(content=content, expand=True, padding=28)], expand=True, spacing=0))
         page.update()
+
+    def render_attivita(content):
+        from attivita import elenco, dettaglio, salva
+        can_create = has_permission(user['id'], 'attivita.create')
+        can_update = has_permission(user['id'], 'attivita.update')
+        search = ft.TextField(
+            label='Cerca in nome, titolare, descrizione e note (min. 3 caratteri)',
+            width=450, prefix_icon=ft.Icons.SEARCH,
+        )
+        status = ft.Dropdown(label='Stato', value='Tutte', width=180,
+            options=[ft.dropdown.Option(v) for v in ('Tutte', 'Attiva', 'Da iniziare', 'Cessata')])
+        results = ft.Column(spacing=4)
+        counter = ft.Text(size=12, color=ft.Colors.GREY_700)
+
+        def refresh(e=None, initial=False):
+            term = (search.value or '').strip()
+            if term and len(term) < 3:
+                results.controls = []
+                counter.value = 'Inserisci almeno 3 caratteri per avviare la ricerca.'
+                if not initial:
+                    page.update()
+                return
+            try:
+                data = elenco(user['id'], term, status.value or 'Tutte')
+                counter.value = f'{len(data)} attività trovate'
+                results.controls = []
+                for item in data:
+                    label = ft.Text(item['nome'], weight=ft.FontWeight.BOLD, expand=True)
+                    subtitle = ft.Text(item['titolare'] or 'Titolare non indicato', size=12, color=ft.Colors.GREY_700)
+                    color = (ft.Colors.GREEN_700 if item['stato'] == 'Attiva' else
+                             ft.Colors.ORANGE_700 if item['stato'] == 'Da iniziare' else ft.Colors.RED_700)
+                    results.controls.append(ft.Container(
+                        bgcolor=ft.Colors.BLUE_GREY_50, border_radius=8, padding=12,
+                        on_click=lambda e, pk=item['id']: open_detail(pk),
+                        ink=True,
+                        content=ft.Row([
+                            ft.Column([label, subtitle], expand=True, spacing=3),
+                            ft.Text(item['stato'], color=color, width=100),
+                            ft.Icon(ft.Icons.CHEVRON_RIGHT),
+                        ])))
+                if not data:
+                    results.controls.append(ft.Text('Nessuna attività corrispondente ai criteri selezionati.'))
+            except Exception as exc:
+                traceback.print_exc()
+                counter.value = 'Errore caricamento elenco: ' + f'{type(exc).__name__}: {exc}'
+                results.controls = [ft.Text(counter.value, color=ft.Colors.RED_700, selectable=True)]
+            if not initial:
+                page.update()
+
+        def open_detail(item_id=None):
+            if item_id is None and not can_create:
+                notify('Inserimento non autorizzato.', True)
+                return
+            try:
+                item = dettaglio(user['id'], item_id) if item_id is not None else {}
+            except (ValueError, PermissionError) as exc:
+                notify(str(exc), True)
+                return
+            editable = can_update if item_id is not None else can_create
+            def field(key, label, multiline=False):
+                return ft.TextField(label=label, value=((item.get(key, '') or '').upper() if key == 'nome' else (item.get(key, '') or '')),
+                    read_only=not editable, multiline=multiline,
+                    min_lines=2 if multiline else 1, max_lines=4 if multiline else 1)
+            fields = {key: field(key, label, multiline) for key, label, multiline in [
+                ('nome', 'Nome attività *', False),
+                ('titolare', 'Titolare', False),
+                ('pec', 'PEC', False),
+                ('descrizione', 'Descrizione', True),
+                ('note', 'Note', True),
+                ('data_inizio', 'Data inizio (AAAA-MM-GG)', False),
+                ('data_cessazione', 'Data cessazione (AAAA-MM-GG)', False),
+            ]}
+            error = ft.Text(color=ft.Colors.RED_700)
+            detail_controls = list(fields.values())
+            if item_id is not None:
+                detail_controls.insert(0, ft.Text('Stato attuale: ' + item['stato'], weight=ft.FontWeight.BOLD))
+            detail_controls.append(error)
+            dlg = ft.AlertDialog(modal=True,
+                title=ft.Text('Nuova attività economica' if item_id is None else 'Dettaglio attività economica'),
+                content=ft.Column(detail_controls, tight=True, width=580, height=490,
+                                  scroll=ft.ScrollMode.AUTO), actions=[])
+            def save(e):
+                try:
+                    values = {key: control.value for key, control in fields.items()}
+                    salva(user['id'], user['username'], values, item_id)
+                    page.pop_dialog()
+                    refresh()
+                    notify('Attività salvata correttamente.')
+                except (ValueError, PermissionError) as exc:
+                    error.value = str(exc)
+                    page.update()
+                except Exception as exc:
+                    error.value = 'Salvataggio non riuscito: ' + str(exc)
+                    page.update()
+            dlg.actions = [ft.TextButton('Chiudi', on_click=lambda e: page.pop_dialog())]
+            if editable:
+                dlg.actions.append(ft.Button('Salva', icon=ft.Icons.SAVE, on_click=save))
+            page.show_dialog(dlg)
+
+        search.on_change = refresh
+        status.on_select = refresh
+        status.on_change = refresh
+        buttons = [ft.OutlinedButton('Aggiorna', icon=ft.Icons.REFRESH, on_click=refresh)]
+        if can_create:
+            buttons.append(ft.Button('Nuova attività', icon=ft.Icons.ADD, on_click=lambda e: open_detail()))
+        content.controls.extend([
+            ft.Text('Registro attività economiche', size=17, weight=ft.FontWeight.W_600),
+            ft.Row([search, status], wrap=True, spacing=12),
+            ft.Row(buttons, wrap=True), counter, results,
+        ])
+        # Carica i dati dopo aver montato i controlli nella pagina.
+        # Evita errori silenziosi durante la costruzione della schermata.
+        refresh(initial=True)
 
     def render_admin(content):
         if not has_permission(user['id'], 'users.manage'):

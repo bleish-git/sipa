@@ -1,8 +1,8 @@
 """Persistence layer: SQLAlchemy, SQLite for development, PostgreSQL-ready."""
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, LargeBinary, String, Text, create_engine, select, event, UniqueConstraint
+from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, LargeBinary, String, Text, create_engine, select, event, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -23,6 +23,17 @@ class User(Base):
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     failed_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+class AttivitaEconomica(Base):
+    __tablename__ = 'attivita_economiche'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    nome: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    titolare: Mapped[str] = mapped_column(String(200), default='', nullable=False)
+    pec: Mapped[str] = mapped_column(String(254), default='', nullable=False)
+    descrizione: Mapped[str] = mapped_column(Text, default='', nullable=False)
+    note: Mapped[str] = mapped_column(Text, default='', nullable=False)
+    data_inizio: Mapped[date | None] = mapped_column(Date, nullable=True)
+    data_cessazione: Mapped[date | None] = mapped_column(Date, nullable=True)
 
 class AuditEvent(Base):
     __tablename__ = 'audit_events'

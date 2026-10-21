@@ -6,7 +6,7 @@ from sqlalchemy import inspect, text
 from database import engine, Base
 
 BASE = Path(__file__).resolve().parent
-HEAD = '0001_initial'
+HEAD = '0002_attivita_economiche'
 
 def config():
     return Config(str(BASE / 'alembic.ini'))
@@ -21,18 +21,20 @@ def adopt_legacy():
     """Stamp only if all tables AND columns from baseline exist; no silent schema changes."""
     insp = inspect(engine)
     existing = set(insp.get_table_names())
-    required = set(Base.metadata.tables)
+    required = set(Base.metadata.tables) - {'attivita_economiche'}
     if not existing.intersection(required):
         return False
     missing = required - existing
     if missing:
         raise RuntimeError(f'Schema preesistente incompleto: tabelle mancanti {sorted(missing)}. Eseguire prima la migrazione v0.2→v0.3.')
     for name, table in Base.metadata.tables.items():
+        if name not in required:
+            continue
         present = {c['name'] for c in insp.get_columns(name)}
         missing_columns = {c.name for c in table.columns} - present
         if missing_columns:
             raise RuntimeError(f'Schema preesistente incompleto: {name} senza colonne {sorted(missing_columns)}')
-    command.stamp(config(), HEAD)
+    command.stamp(config(), '0001_initial')
     return True
 
 def upgrade():
