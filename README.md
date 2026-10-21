@@ -1,4 +1,4 @@
-# SIPA — Sistema Informativo Polizia Amministrativa (v0.2)
+# SIPA — Sistema Informativo Polizia Amministrativa (v0.4)
 
 Prototipo locale per Linux Mint, Python + Flet + SQLAlchemy + SQLite. 
 

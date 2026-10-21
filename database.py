@@ -72,7 +72,8 @@ DEFAULT_ROLES = {
 }
 
 def init_database():
-    Base.metadata.create_all(engine)
+    from schema import check_current
+    check_current()
     with Session(engine) as session:
         for code, description in PERMISSIONS.items():
             if session.get(Permission, code) is None:

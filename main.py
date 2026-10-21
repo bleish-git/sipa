@@ -1,8 +1,11 @@
 """SIPA v0.2 - Flet desktop UI; demonstration only, not production-ready."""
 import sys
+import json
 from pathlib import Path
 import flet as ft
 from database import init_database, engine, log
+from schema import upgrade as upgrade_schema
+from operations import backup as create_backup, inspect_backup
 from sqlalchemy.orm import Session
 from security import (authenticate, bootstrap, has_permission, role_permissions, set_role_permissions, list_users, list_events, create_user,
                       update_user, reset_password, change_password)
@@ -248,6 +251,71 @@ def main(page: ft.Page):
             load()
             page.show_dialog(dlg)
 
+        # FilePicker desktop (Flet 0.80+): UI operations only; restore must be done offline.
+        def backup_dialog(e=None):
+            directory = ft.TextField(label='Cartella di destinazione', value=str(Path.home() / 'BackupSIPA'), width=500)
+            message = ft.Text(color=ft.Colors.RED_700)
+            dlg = ft.AlertDialog(modal=True, title=ft.Text('Crea backup SIPA'),
+                content=ft.Column([ft.Text('Backup completo SQLite, versione dello schema e chiave audit. Non include allegati esterni.'),directory,message],tight=True,width=540),actions=[])
+            def save(e):
+                try:
+                    path=create_backup(directory.value)
+                    page.pop_dialog()
+                    notify('Backup creato: '+str(path))
+                except Exception as exc:
+                    message.value=str(exc)
+                    page.update()
+            dlg.actions=[ft.TextButton('Annulla',on_click=lambda e:page.pop_dialog()),ft.Button('Genera backup',on_click=save)]
+            page.show_dialog(dlg)
+
+        async def restore_picker(e=None):
+            try:
+                files = await ft.FilePicker().pick_files(allow_multiple=False, dialog_title='Seleziona backup SIPA (.db)',
+                                                        file_type=ft.FilePickerFileType.CUSTOM, allowed_extensions=['db'])
+                if not files: return
+                path = files[0].path
+                if not path:
+                    notify('Il selettore non ha restituito un percorso locale.',True)
+                    return
+                report = inspect_backup(path)
+                def lines(label, value):
+                    return label+': '+(json.dumps(value,ensure_ascii=False) if value else 'nessuna')
+                description='\n'.join([
+                    'Backup: '+str(report['file']),
+                    'Versione schema backup: '+report['schema_backup'],
+                    'Versione schema attuale: '+report['schema_current'],
+                    lines('Tabelle presenti solo nel backup',report['tables_only_backup']),
+                    lines('Tabelle presenti solo nel database attuale',report['tables_only_current']),
+                    lines('Colonne presenti solo nel backup',report['columns_only_backup']),
+                    lines('Colonne presenti solo nel database attuale',report['columns_only_current']),
+                    lines('Colonne con tipo differente',report['changed_column_types']),
+                    'Chiave audit nel backup: '+('sì' if report['key_present'] else 'no'),
+                ])
+                dlg=ft.AlertDialog(modal=True,title=ft.Text('Anteprima ripristino – differenze di struttura'),
+                    content=ft.Column([
+                        ft.Text('Il ripristino sostituisce tutti i dati, non unisce i registri. Le differenze mostrate sono di STRUTTURA, non di contenuto.',weight=ft.FontWeight.BOLD),
+                        ft.Text(description,selectable=True),
+                        ft.Divider(),
+                        ft.Text('Per sicurezza, il ripristino si esegue solo a SIPA chiuso tramite CLI. Archivia prima database e chiave correnti. Nessun dato è stato modificato.'),
+                        ft.Text('1. Chiudi SIPA e tutti gli altri processi.\n2. Conserva sipa.db e .sipa_audit_key fuori dalla cartella.\n3. Esegui:',size=12),
+                        ft.Text('python cli.py restore '+repr(path)+' --confirm "RIPRISTINA SIPA"',selectable=True,size=12),
+                        ft.Text('4. Esegui python cli.py upgrade-db, quindi riavvia SIPA.',size=12),
+                    ],scroll=ft.ScrollMode.AUTO,height=470,width=690),
+                    actions=[ft.TextButton('Chiudi anteprima',on_click=lambda e:page.pop_dialog())])
+                page.show_dialog(dlg)
+            except Exception as exc:
+                notify('Impossibile analizzare il backup: '+str(exc),True)
+
+        if has_permission(user['id'],'backup.manage'):
+            content.controls.extend([
+                ft.Divider(),ft.Text('Backup e ripristino',size=20,weight=ft.FontWeight.BOLD),
+                ft.Row([
+                    ft.Button('Genera backup',icon=ft.Icons.BACKUP,on_click=backup_dialog),
+                    ft.OutlinedButton('Ripristina da file / confronta schema',icon=ft.Icons.RESTORE,on_click=restore_picker),
+                ],wrap=True),
+                ft.Text('Il ripristino è intenzionalmente offline: il confronto non altera il database.',size=12,color=ft.Colors.GREY_700)
+            ])
+
         content.controls.extend([
             ft.Row([ft.Text('Gestione utenti', size=21, weight=ft.FontWeight.BOLD),
                     ft.Button('Nuovo utente', icon=ft.Icons.PERSON_ADD, on_click=lambda e: user_dialog())], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
@@ -259,7 +327,9 @@ def main(page: ft.Page):
     login_screen()
 
 if __name__ == '__main__':
+    upgrade_schema()
     if '--init-admin' in sys.argv:
+        init_database()
         bootstrap()
     else:
         init_database()
