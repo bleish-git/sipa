@@ -3,11 +3,12 @@ import getpass
 import hashlib
 import hmac
 import secrets
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-from database import User, AuditEvent, engine, init_database, log
+from database import User, AuditEvent, LoginThrottle, RolePermission, PERMISSIONS, engine, init_database, log
 
-ROLES = ('admin', 'operatore')
+ROLES = ('admin', 'responsabile', 'operatore', 'consultazione')
 ITERATIONS = 600_000
 
 def digest(password, salt):
@@ -41,21 +42,81 @@ def bootstrap():
         session.commit()
         print('Amministratore creato.')
 
+def _utc(dt):
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+def _throttle_key(username):
+    # Account-scoped throttling works across all clients using the same central DB.
+    # Do not rely on client-supplied IPs, which can be spoofed.
+    return 'account:' + (username or '').strip().casefold()[:110]
+
 def authenticate(username, password):
     username = (username or '').strip()
+    now = datetime.now(timezone.utc)
+    key = _throttle_key(username)
     with Session(engine) as session:
+        # SQLite BEGIN IMMEDIATE serializes writers, preventing parallel attempts bypassing the counter.
+        if engine.dialect.name == 'sqlite':
+            session.connection().exec_driver_sql('BEGIN IMMEDIATE')
+        throttle = session.get(LoginThrottle, key)
+        if throttle is None:
+            throttle = LoginThrottle(identifier=key, failures=0)
+            session.add(throttle)
+            session.flush()
         user = session.scalar(select(User).where(User.username == username))
-        if user is None or not user.active:
-            log(session, username or '(vuoto)', 'login_fallito')
+        blocked = throttle.blocked_until and _utc(throttle.blocked_until) > now
+        # Always calculate a hash, including unknown accounts, to reduce timing differences.
+        candidate = digest(password or '', user.salt if user else bytes(16))
+        valid = bool(user and user.active and hmac.compare_digest(candidate, user.password_hash))
+        if blocked or not valid:
+            if not blocked:
+                throttle.failures += 1
+                if throttle.failures >= 5:
+                    throttle.blocked_until = now + timedelta(minutes=15)
+                    throttle.failures = 0
+            log(session, username or '(vuoto)', 'login_rifiutato', details='credenziali o limitazione')
             session.commit()
             return None
-        if not hmac.compare_digest(digest(password or '', user.salt), user.password_hash):
-            log(session, username, 'login_fallito')
-            session.commit()
-            return None
+        throttle.failures = 0
+        throttle.blocked_until = None
         log(session, username, 'login_ok')
         session.commit()
-        return {'id': user.id, 'username': user.username, 'role': user.role, 'must_change_password': user.must_change_password}
+        return {'id': user.id, 'username': user.username, 'role': user.role,
+                'must_change_password': user.must_change_password}
+
+def has_permission(user_id, code):
+    with Session(engine) as session:
+        user = session.get(User, user_id)
+        return bool(user and user.active and session.get(RolePermission, (user.role, code)))
+
+def require_permission(session, actor_id, code):
+    actor = session.get(User, actor_id)
+    if not actor or not actor.active or session.get(RolePermission, (actor.role, code)) is None:
+        raise PermissionError('Permesso non concesso: ' + code)
+    return actor
+
+def role_permissions():
+    with Session(engine) as session:
+        return {role: [r.permission_code for r in session.scalars(
+            select(RolePermission).where(RolePermission.role == role).order_by(RolePermission.permission_code))]
+            for role in ROLES}
+
+def set_role_permissions(actor_id, role, codes):
+    if role not in ROLES or not set(codes).issubset(PERMISSIONS):
+        raise ValueError('Ruolo o permessi non validi.')
+    if role == 'admin' and set(codes) != set(PERMISSIONS):
+        raise ValueError('I permessi amministratore sono fissi per evitare blocchi di gestione.')
+    with Session(engine) as session:
+        actor = require_permission(session, actor_id, 'permissions.manage')
+        for r in list(session.scalars(select(RolePermission).where(RolePermission.role == role))):
+            session.delete(r)
+        session.flush()
+        for code in sorted(set(codes)):
+            session.add(RolePermission(role=role, permission_code=code))
+        log(session, actor.username, 'permessi_ruolo_modificati', role, ','.join(sorted(codes)))
+        session.commit()
 
 def list_users():
     with Session(engine) as session:
@@ -70,7 +131,7 @@ def list_events(limit=100):
 
 def require_admin(session, actor_id):
     actor = session.get(User, actor_id)
-    if actor is None or not actor.active or actor.role != 'admin':
+    if actor is None or not actor.active or session.get(RolePermission, (actor.role, 'users.manage')) is None:
         raise PermissionError('Operazione riservata agli amministratori attivi.')
     return actor
 

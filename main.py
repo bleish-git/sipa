@@ -4,7 +4,7 @@ from pathlib import Path
 import flet as ft
 from database import init_database, engine, log
 from sqlalchemy.orm import Session
-from security import (authenticate, bootstrap, list_users, list_events, create_user,
+from security import (authenticate, bootstrap, has_permission, role_permissions, set_role_permissions, list_users, list_events, create_user,
                       update_user, reset_password, change_password)
 
 ASSETS = Path(__file__).resolve().parent / 'assets'
@@ -82,7 +82,7 @@ def main(page: ft.Page):
             nonlocal user
             user = authenticate(username.value or '', password.value or '')
             if user is None:
-                error.value = 'Credenziali non valide o account disattivato.'
+                error.value = 'Accesso non consentito. Verifica credenziali o riprova tra 15 minuti.'
                 password.value = ''
                 page.update()
                 return
@@ -96,7 +96,7 @@ def main(page: ft.Page):
                 ft.Text('Sistema Informativo Polizia Amministrativa', size=15, text_align=ft.TextAlign.CENTER),
                 ft.Divider(), username, password, error,
                 ft.Button('Accedi', icon=ft.Icons.LOGIN, width=350, on_click=submit),
-                ft.Text('SIPA v0.2 • ambiente dimostrativo', size=12, color=ft.Colors.GREY_600),
+                ft.Text('SIPA v0.3 • ambiente dimostrativo', size=12, color=ft.Colors.GREY_600),
             ], tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15))
         page.add(ft.Container(content=card, alignment=ft.Alignment.CENTER, expand=True, bgcolor=ft.Colors.BLUE_GREY_50))
         page.update()
@@ -104,7 +104,7 @@ def main(page: ft.Page):
     def dashboard():
         nonlocal selected_section
         page.clean()
-        if selected_section == 5 and user['role'] != 'admin':
+        if selected_section == 5 and not has_permission(user['id'], 'users.manage'):
             selected_section = 0
         content = ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, spacing=15)
         navigation = ft.Column(spacing=5)
@@ -114,7 +114,11 @@ def main(page: ft.Page):
             if user['must_change_password']:
                 password_dialog(force=True)
                 return
-            if index == 5 and user['role'] != 'admin':
+            if index == 5 and not has_permission(user['id'], 'users.manage'):
+                return
+            needed = {0:'dashboard.view',1:'attivita.read',2:'verbali.read',3:'accertamenti.read',4:'documenti.read',5:'users.manage'}[index]
+            if not has_permission(user['id'], needed):
+                notify('Accesso non autorizzato a questo settore.', True)
                 return
             selected_section = index
             render_navigation()
@@ -124,7 +128,8 @@ def main(page: ft.Page):
         def render_navigation():
             navigation.controls.clear()
             for i, (label, icon) in enumerate(SECTIONS):
-                if i == 5 and user['role'] != 'admin':
+                required = {0:'dashboard.view',1:'attivita.read',2:'verbali.read',3:'accertamenti.read',4:'documenti.read',5:'users.manage'}[i]
+                if not has_permission(user['id'], required):
                     continue
                 navigation.controls.append(ft.Button(label, icon=icon, width=244,
                     bgcolor=ft.Colors.BLUE_100 if i == selected_section else None,
@@ -165,7 +170,7 @@ def main(page: ft.Page):
         page.update()
 
     def render_admin(content):
-        if user['role'] != 'admin':
+        if not has_permission(user['id'], 'users.manage'):
             return
         rows = ft.Column(spacing=5)
         events = ft.Column(spacing=5)
@@ -174,7 +179,7 @@ def main(page: ft.Page):
             username = ft.TextField(label='Nome utente', value=existing['username'] if existing else '', disabled=existing is not None)
             password = ft.TextField(label='Password temporanea (min. 12 caratteri)', password=True, can_reveal_password=True)
             role = ft.Dropdown(label='Ruolo', value=existing['role'] if existing else 'operatore',
-                options=[ft.dropdown.Option('admin', 'Amministratore'), ft.dropdown.Option('operatore', 'Operatore')])
+                options=[ft.dropdown.Option('admin', 'Amministratore'), ft.dropdown.Option('operatore', 'Operatore'), ft.dropdown.Option('responsabile', 'Responsabile'), ft.dropdown.Option('consultazione', 'Consultazione')])
             active = ft.Checkbox(label='Account attivo', value=existing['active'] if existing else True)
             message = ft.Text(color=ft.Colors.RED_700)
             fields = [username, password, role, active, message] if mode == 'create' else ([password, message] if mode == 'reset' else [role, active, message])
@@ -213,10 +218,40 @@ def main(page: ft.Page):
                 events.controls.append(ft.Text(f"{ev['time']}   |   {ev['actor']}   |   {ev['action']}   |   {ev['target']}", size=12, selectable=True))
             page.update()
 
+        def permission_dialog(e=None):
+            from database import PERMISSIONS
+            current = role_permissions()
+            selected_role = ft.Dropdown(label='Ruolo', value='operatore',
+                options=[ft.dropdown.Option(r) for r in ('responsabile','operatore','consultazione')])
+            checks = {code: ft.Checkbox(label=f'{code} — {desc}') for code,desc in PERMISSIONS.items()}
+            box = ft.Column(list(checks.values()), scroll=ft.ScrollMode.AUTO, height=390, width=530)
+            message = ft.Text(color=ft.Colors.RED_700)
+            def load(e=None):
+                allowed = set(current.get(selected_role.value, []))
+                for code, control in checks.items():
+                    control.value = code in allowed
+                page.update()
+            def save(e):
+                try:
+                    set_role_permissions(user['id'], selected_role.value,
+                                         [code for code, c in checks.items() if c.value])
+                    page.pop_dialog()
+                    notify('Permessi aggiornati. Le modifiche si applicano ai nuovi controlli.')
+                except (ValueError, PermissionError) as exc:
+                    message.value = str(exc)
+                    page.update()
+            selected_role.on_change = load
+            dlg = ft.AlertDialog(modal=True, title=ft.Text('Permessi granulari per ruolo'),
+                content=ft.Column([selected_role, box, message], tight=True, width=550),
+                actions=[ft.TextButton('Annulla', on_click=lambda e: page.pop_dialog()),
+                         ft.Button('Salva', on_click=save)])
+            load()
+            page.show_dialog(dlg)
+
         content.controls.extend([
             ft.Row([ft.Text('Gestione utenti', size=21, weight=ft.FontWeight.BOLD),
                     ft.Button('Nuovo utente', icon=ft.Icons.PERSON_ADD, on_click=lambda e: user_dialog())], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            rows, ft.Divider(), ft.Text('Ultimi eventi di accesso e amministrazione', size=19, weight=ft.FontWeight.BOLD),
+            rows, ft.OutlinedButton('Permessi per ruolo', icon=ft.Icons.ADMIN_PANEL_SETTINGS, on_click=permission_dialog), ft.Divider(), ft.Text('Ultimi eventi di accesso e amministrazione', size=19, weight=ft.FontWeight.BOLD),
             ft.OutlinedButton('Aggiorna', icon=ft.Icons.REFRESH, on_click=lambda e: refresh()), events,
         ])
         refresh()
