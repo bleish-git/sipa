@@ -247,40 +247,49 @@ def main(page: ft.Page):
                 ('void', 'Annulla'), ('export', 'Esporta'),
                 ('manage', 'Gestisci'),
             ]
-            checks = {}
-            table_rows = []
-            for area_label, prefix in areas:
-                cells = [ft.DataCell(ft.Text(area_label, size=12))]
-                for action, _ in actions:
-                    code = f'{prefix}.{action}'
-                    if code in PERMISSIONS:
-                        control = ft.Checkbox(
-                            value=False,
-                            tooltip=f'{code} — {PERMISSIONS[code]}',
-                        )
-                        checks[code] = control
-                        cells.append(ft.DataCell(control))
-                    else:
-                        cells.append(ft.DataCell(ft.Text('—', color=ft.Colors.GREY_400)))
-                table_rows.append(ft.DataRow(cells=cells))
-            permission_table = ft.DataTable(
-                columns=[ft.DataColumn(ft.Text('Sezione'))] + [
-                    ft.DataColumn(ft.Text(label, size=11)) for _, label in actions
-                ],
-                rows=table_rows,
-                column_spacing=13,
-                horizontal_margin=12,
-                data_row_min_height=44,
-                data_row_max_height=44,
-            )
             message = ft.Text(color=ft.Colors.RED_700)
+            checks = {}
+            # Ricrea la tabella ad ogni selezione: i controlli vengono
+            # rimontati con i valori del ruolo scelto, senza stato residuo.
+            table_holder = ft.Column()
+
+            def build_table(role):
+                checks.clear()
+                allowed = set(current.get(role, []))
+                table_rows = []
+                for area_label, prefix in areas:
+                    cells = [ft.DataCell(ft.Text(area_label, size=12))]
+                    for action, _ in actions:
+                        code = f'{prefix}.{action}'
+                        if code in PERMISSIONS:
+                            control = ft.Checkbox(
+                                value=(code in allowed),
+                                tooltip=f'{code} — {PERMISSIONS[code]}',
+                            )
+                            checks[code] = control
+                            cells.append(ft.DataCell(control))
+                        else:
+                            cells.append(ft.DataCell(ft.Text('—', color=ft.Colors.GREY_400)))
+                    table_rows.append(ft.DataRow(cells=cells))
+                return ft.DataTable(
+                    columns=[ft.DataColumn(ft.Text('Sezione'))] + [
+                        ft.DataColumn(ft.Text(label, size=11)) for _, label in actions
+                    ],
+                    rows=table_rows,
+                    column_spacing=13,
+                    horizontal_margin=12,
+                    data_row_min_height=44,
+                    data_row_max_height=44,
+                )
 
             def load(e=None):
-                # Aggiorna TUTTE le caselle quando cambia il ruolo, evitando
-                # che restino spunte del ruolo precedentemente selezionato.
-                allowed = set(current.get(selected_role.value, []))
-                for code, control in checks.items():
-                    control.value = code in allowed
+                # Nelle versioni recenti di Flet la selezione del Dropdown
+                # viene notificata con on_select (non soltanto on_change).
+                role = getattr(getattr(e, 'control', None), 'value', None) or selected_role.value
+                if role not in current:
+                    return
+                selected_role.value = role
+                table_holder.controls = [build_table(role)]
                 message.value = ''
                 page.update()
 
@@ -295,7 +304,8 @@ def main(page: ft.Page):
                     message.value = str(exc)
                     page.update()
 
-            selected_role.on_change = load
+            selected_role.on_select = load
+            selected_role.on_change = load  # Compatibilità con versioni precedenti
             dlg = ft.AlertDialog(
                 modal=True,
                 title=ft.Text('Permessi granulari per ruolo'),
@@ -303,7 +313,7 @@ def main(page: ft.Page):
                     [
                         selected_role,
                         ft.Text('Seleziona un ruolo: la tabella mostra i permessi assegnati.', size=12),
-                        ft.Row([permission_table], scroll=ft.ScrollMode.AUTO),
+                        ft.Row([table_holder], scroll=ft.ScrollMode.AUTO),
                         message,
                     ],
                     tight=True, width=850, scroll=ft.ScrollMode.AUTO,
