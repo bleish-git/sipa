@@ -224,30 +224,95 @@ def main(page: ft.Page):
         def permission_dialog(e=None):
             from database import PERMISSIONS
             current = role_permissions()
-            selected_role = ft.Dropdown(label='Ruolo', value='operatore',
-                options=[ft.dropdown.Option(r) for r in ('responsabile','operatore','consultazione')])
-            checks = {code: ft.Checkbox(label=f'{code} — {desc}') for code,desc in PERMISSIONS.items()}
-            box = ft.Column(list(checks.values()), scroll=ft.ScrollMode.AUTO, height=390, width=530)
+            selected_role = ft.Dropdown(
+                label='Ruolo', value='operatore', width=270,
+                options=[ft.dropdown.Option(r) for r in ('responsabile', 'operatore', 'consultazione')],
+            )
+            # Righe = aree funzionali; colonne = tipo di autorizzazione.
+            # Le celle non applicabili rimangono vuote.
+            areas = [
+                ('Dashboard', 'dashboard'),
+                ('Attività economiche', 'attivita'),
+                ('Verbali amministrativi', 'verbali'),
+                ('Accertamenti', 'accertamenti'),
+                ('Documenti', 'documenti'),
+                ('Utenti', 'users'),
+                ('Permessi', 'permissions'),
+                ('Audit', 'audit'),
+                ('Backup', 'backup'),
+            ]
+            actions = [
+                ('read', 'Consulta'), ('view', 'Visualizza'),
+                ('create', 'Inserisci'), ('update', 'Modifica'),
+                ('void', 'Annulla'), ('export', 'Esporta'),
+                ('manage', 'Gestisci'),
+            ]
+            checks = {}
+            table_rows = []
+            for area_label, prefix in areas:
+                cells = [ft.DataCell(ft.Text(area_label, size=12))]
+                for action, _ in actions:
+                    code = f'{prefix}.{action}'
+                    if code in PERMISSIONS:
+                        control = ft.Checkbox(
+                            value=False,
+                            tooltip=f'{code} — {PERMISSIONS[code]}',
+                        )
+                        checks[code] = control
+                        cells.append(ft.DataCell(control))
+                    else:
+                        cells.append(ft.DataCell(ft.Text('—', color=ft.Colors.GREY_400)))
+                table_rows.append(ft.DataRow(cells=cells))
+            permission_table = ft.DataTable(
+                columns=[ft.DataColumn(ft.Text('Sezione'))] + [
+                    ft.DataColumn(ft.Text(label, size=11)) for _, label in actions
+                ],
+                rows=table_rows,
+                column_spacing=13,
+                horizontal_margin=12,
+                data_row_min_height=44,
+                data_row_max_height=44,
+            )
             message = ft.Text(color=ft.Colors.RED_700)
+
             def load(e=None):
+                # Aggiorna TUTTE le caselle quando cambia il ruolo, evitando
+                # che restino spunte del ruolo precedentemente selezionato.
                 allowed = set(current.get(selected_role.value, []))
                 for code, control in checks.items():
                     control.value = code in allowed
+                message.value = ''
                 page.update()
+
             def save(e):
                 try:
-                    set_role_permissions(user['id'], selected_role.value,
-                                         [code for code, c in checks.items() if c.value])
+                    codes = [code for code, control in checks.items() if control.value]
+                    set_role_permissions(user['id'], selected_role.value, codes)
+                    current[selected_role.value] = codes
                     page.pop_dialog()
-                    notify('Permessi aggiornati. Le modifiche si applicano ai nuovi controlli.')
+                    notify('Permessi aggiornati per il ruolo ' + selected_role.value + '.')
                 except (ValueError, PermissionError) as exc:
                     message.value = str(exc)
                     page.update()
+
             selected_role.on_change = load
-            dlg = ft.AlertDialog(modal=True, title=ft.Text('Permessi granulari per ruolo'),
-                content=ft.Column([selected_role, box, message], tight=True, width=550),
-                actions=[ft.TextButton('Annulla', on_click=lambda e: page.pop_dialog()),
-                         ft.Button('Salva', on_click=save)])
+            dlg = ft.AlertDialog(
+                modal=True,
+                title=ft.Text('Permessi granulari per ruolo'),
+                content=ft.Column(
+                    [
+                        selected_role,
+                        ft.Text('Seleziona un ruolo: la tabella mostra i permessi assegnati.', size=12),
+                        ft.Row([permission_table], scroll=ft.ScrollMode.AUTO),
+                        message,
+                    ],
+                    tight=True, width=850, scroll=ft.ScrollMode.AUTO,
+                ),
+                actions=[
+                    ft.TextButton('Annulla', on_click=lambda e: page.pop_dialog()),
+                    ft.Button('Salva', on_click=save),
+                ],
+            )
             load()
             page.show_dialog(dlg)
 
