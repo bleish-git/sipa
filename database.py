@@ -6,7 +6,8 @@ from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Integer, LargeBinary
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
 BASE_DIR = Path(__file__).resolve().parent
-DATABASE_URL = os.environ.get('SIPA_DB_URL', os.environ.get('GESTIONALE_DB_URL', f'sqlite:///{BASE_DIR / "sipa.db"}'))
+from db_settings import database_url
+DATABASE_URL = database_url()
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
 
 class Base(DeclarativeBase):

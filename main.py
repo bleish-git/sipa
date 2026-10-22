@@ -1,12 +1,13 @@
-"""SIPA v0.2 - Flet desktop UI; demonstration only, not production-ready."""
+"""SIPA - Sistema Informativo Polizia Amministrativa."""
 import sys
 import json
 import traceback
 from pathlib import Path
+from db_config import read_config, save_config
 import flet as ft
 from database import init_database, engine, log
-from schema import upgrade as upgrade_schema
-from operations import backup as create_backup, inspect_backup
+from schema import revision, HEAD
+from operations import backup as create_backup, inspect_backup, maintenance_upgrade
 from sqlalchemy.orm import Session
 from security import (authenticate, bootstrap, has_permission, role_permissions, set_role_permissions, list_users, list_events, create_user,
                       update_user, reset_password, change_password)
@@ -100,7 +101,7 @@ def main(page: ft.Page):
                 ft.Text('Sistema Informativo Polizia Amministrativa', size=15, text_align=ft.TextAlign.CENTER),
                 ft.Divider(), username, password, error,
                 ft.Button('Accedi', icon=ft.Icons.LOGIN, width=350, on_click=submit),
-                ft.Text('SIPA v0.3 • ambiente dimostrativo', size=12, color=ft.Colors.GREY_600),
+                ft.Text('© bleish-git • SIPA v0.5 • Licenza MIT', size=12, color=ft.Colors.GREY_600),
             ], tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15))
         page.add(ft.Container(content=card, alignment=ft.Alignment.CENTER, expand=True, bgcolor=ft.Colors.BLUE_GREY_50))
         page.update()
@@ -145,7 +146,7 @@ def main(page: ft.Page):
             title = SECTIONS[selected_section][0]
             content.controls.extend([
                 ft.Text(title, size=28, weight=ft.FontWeight.BOLD),
-                ft.Text('SIPA • ambiente di sviluppo, dati fittizi', color=ft.Colors.GREY_700),
+                ft.Text('© bleish-git • MIT • github.com/bleish-git/sipa', color=ft.Colors.GREY_700),
                 ft.Divider(),
             ])
             if selected_section == 5:
@@ -504,8 +505,78 @@ def main(page: ft.Page):
             except Exception as exc:
                 notify('Impossibile analizzare il backup: '+str(exc),True)
 
+        def database_dialog(e=None):
+            c = read_config()
+            kind = ft.Dropdown(label='Motore database', value=c.get('type', 'sqlite'), width=240,
+                options=[ft.dropdown.Option('sqlite', 'SQLite'), ft.dropdown.Option('postgresql', 'PostgreSQL')])
+            path = ft.TextField(label='File SQLite (percorso assoluto)', value=c.get('path', str(Path(__file__).parent / 'sipa.db')), width=550)
+            host = ft.TextField(label='Host PostgreSQL', value=c.get('host', 'localhost'))
+            port = ft.TextField(label='Porta', value=str(c.get('port', 5432)))
+            dbname = ft.TextField(label='Nome database', value=c.get('database', 'sipa'))
+            dbuser = ft.TextField(label='Utente PostgreSQL', value=c.get('username', 'sipa'))
+            envname = ft.TextField(label='Variabile ambiente della password', value=c.get('password_env', 'SIPA_PG_PASSWORD'))
+            info = ft.Text('La password non viene salvata: impostare la variabile ambiente prima di avviare SIPA.', size=12)
+            msg = ft.Text(color=ft.Colors.RED_700)
+            fields = ft.Column(spacing=8, tight=True)
+            def refresh_fields(e=None):
+                value = getattr(getattr(e, 'control', None), 'value', None) or kind.value
+                fields.controls = [path] if value == 'sqlite' else [host, port, dbname, dbuser, envname, info]
+                page.update()
+            kind.on_select = refresh_fields
+            kind.on_change = refresh_fields
+            def save(e):
+                try:
+                    save_config({'type': kind.value, 'path': path.value, 'host': host.value,
+                                 'port': port.value, 'database': dbname.value, 'username': dbuser.value,
+                                 'password_env': envname.value})
+                    page.pop_dialog()
+                    notify('Configurazione salvata. Chiudere SIPA e riavviare. Il nuovo database non viene creato o migrato automaticamente.')
+                except Exception as exc:
+                    msg.value = str(exc)
+                    page.update()
+            dlg = ft.AlertDialog(modal=True, title=ft.Text('Configurazione database'),
+                content=ft.Column([kind, fields, msg,
+                    ft.Text('ATTENZIONE: il cambio motore non trasferisce i dati. Eseguire una migrazione separata e verificata.', size=12)],
+                    width=580, tight=True, scroll=ft.ScrollMode.AUTO),
+                actions=[ft.TextButton('Annulla', on_click=lambda e: page.pop_dialog()),
+                         ft.Button('Salva configurazione', on_click=save)])
+            refresh_fields()
+            page.show_dialog(dlg)
+
+        def upgrade_dialog(e=None):
+            from schema import revision, HEAD
+            current = revision()
+            directory = ft.TextField(label='Cartella backup preventivo', value=str(Path.home() / 'BackupSIPA'), width=490)
+            confirm = ft.Checkbox(label='Confermo che tutti gli altri client SIPA sono chiusi')
+            msg = ft.Text(color=ft.Colors.RED_700)
+            def apply(e):
+                if not confirm.value:
+                    msg.value = 'Confermare la chiusura degli altri client.'
+                    page.update()
+                    return
+                try:
+                    result = maintenance_upgrade(directory.value)
+                    page.pop_dialog()
+                    notify('Revisione: ' + str(result['after']) + '. Backup: ' + str(result['backup']))
+                except Exception as exc:
+                    msg.value = str(exc)
+                    page.update()
+            dlg = ft.AlertDialog(modal=True, title=ft.Text('Aggiornamento schema database'),
+                content=ft.Column([
+                    ft.Text(f'Revisione attuale: {current or "non versionato"}'),
+                    ft.Text(f'Revisione richiesta: {HEAD}'),
+                    ft.Text('Prima delle migrazioni verrà creato e verificato un backup. Operazione da eseguire senza altri client collegati.'),
+                    directory, confirm, msg], tight=True, width=530),
+                actions=[ft.TextButton('Annulla', on_click=lambda e: page.pop_dialog()),
+                         ft.Button('Verifica e aggiorna', on_click=apply)])
+            page.show_dialog(dlg)
+
         if has_permission(user['id'],'backup.manage'):
             content.controls.extend([
+                ft.Divider(),ft.Text('Database e aggiornamenti',size=20,weight=ft.FontWeight.BOLD),
+                ft.Text(f'Revisione database: {revision() or "non versionato"} • Revisione applicazione: {HEAD}', size=12),
+                ft.Row([ft.OutlinedButton('Configura database', icon=ft.Icons.STORAGE, on_click=database_dialog),
+                        ft.Button('Aggiorna schema (con backup)', icon=ft.Icons.SYSTEM_UPDATE_ALT, on_click=upgrade_dialog)], wrap=True),
                 ft.Divider(),ft.Text('Backup e ripristino',size=20,weight=ft.FontWeight.BOLD),
                 ft.Row([
                     ft.Button('Genera backup',icon=ft.Icons.BACKUP,on_click=backup_dialog),
@@ -525,7 +596,8 @@ def main(page: ft.Page):
     login_screen()
 
 if __name__ == '__main__':
-    upgrade_schema()
+    if revision() != HEAD:
+        raise SystemExit(f'Schema non aggiornato: {revision() or "non versionato"}. Eseguire: python cli.py upgrade-db --backup-dir ~/BackupSIPA')
     if '--init-admin' in sys.argv:
         init_database()
         bootstrap()

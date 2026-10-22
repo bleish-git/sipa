@@ -75,7 +75,7 @@ def backup(destination):
             shutil.copy2(KEY, key_dest)
             os.chmod(key_dest, 0o600)
             key_name, key_hash = key_dest.name, _sha(key_dest)
-        manifest = {'format': 2, 'application': 'SIPA', 'application_version': '0.4',
+        manifest = {'format': 2, 'application': 'SIPA', 'application_version': '0.5',
                     'engine': 'sqlite', 'schema_revision': _revision(target),
                     'created_at': datetime.now(timezone.utc).isoformat(),
                     'database': target.name, 'sha256': _sha(target),
@@ -158,3 +158,74 @@ def restore(backup_file, confirmation):
             if staged_key: KEY.unlink(missing_ok=True)
             raise
     return target
+
+
+def maintenance_upgrade(destination):
+    """Backup obbligatorio prima di qualsiasi migrazione esplicita.
+
+    Per SQLite crea una copia consistente anche quando lo schema e' precedente.
+    Per PostgreSQL usa pg_dump in formato custom (richiede pg_dump installato).
+    Non eseguire mentre altri client stanno scrivendo.
+    """
+    from datetime import datetime, timezone
+    from schema import revision, upgrade, HEAD
+    before = revision()
+    if before == HEAD:
+        return {'before': before, 'after': before, 'backup': None, 'status': 'already_current'}
+    dest = Path(destination).expanduser().resolve()
+    dest.mkdir(parents=True, exist_ok=True)
+    if engine.dialect.name == 'sqlite':
+        source = _sqlite_path()
+        if not source.exists():
+            # Nuova installazione: nessun dato da preservare.
+            backup_file = None
+        else:
+            if dest == source.parent:
+                raise ValueError('Il backup deve trovarsi in un’altra directory')
+            stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+            backup_file = dest / f'sipa_pre_upgrade_{stamp}.db'
+            with sqlite3.connect(str(source)) as src, sqlite3.connect(str(backup_file)) as dst:
+                src.backup(dst)
+                if dst.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+                    raise RuntimeError('Backup preliminare non integro')
+            manifest = {'application': 'SIPA', 'reason': 'pre_upgrade', 'engine': 'sqlite',
+                        'schema_revision': _revision(backup_file), 'database': backup_file.name,
+                        'sha256': _sha(backup_file), 'format': 2}
+            if KEY.exists():
+                key_file = backup_file.with_suffix('.auditkey')
+                shutil.copy2(KEY, key_file)
+                os.chmod(key_file, 0o600)
+                manifest.update(audit_key=key_file.name, audit_key_sha256=_sha(key_file))
+            backup_file.with_suffix('.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+            inspect_backup(backup_file)
+    elif engine.dialect.name == 'postgresql':
+        import subprocess
+        from sqlalchemy.engine import make_url
+        from db_config import read_config
+        if not shutil.which('pg_dump'):
+            raise RuntimeError('pg_dump non installato: migrazione interrotta prima di modificare il database')
+        c = read_config()
+        url = make_url(str(engine.url))
+        password = os.getenv(c.get('password_env', 'SIPA_PG_PASSWORD'))
+        if not password:
+            raise RuntimeError('Password PostgreSQL non disponibile')
+        stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+        backup_file = dest / f'sipa_pre_upgrade_{stamp}.dump'
+        env = {**os.environ, 'PGPASSWORD': password}
+        args = ['pg_dump', '-Fc', '--no-password', '-h', url.host or 'localhost',
+                '-p', str(url.port or 5432), '-U', url.username, '-f', str(backup_file), url.database]
+        result = subprocess.run(args, env=env, capture_output=True, text=True)
+        if result.returncode or not backup_file.is_file() or backup_file.stat().st_size == 0:
+            backup_file.unlink(missing_ok=True)
+            raise RuntimeError('Backup PostgreSQL non riuscito: ' + result.stderr[-500:])
+        backup_file.with_suffix('.json').write_text(json.dumps({
+            'application': 'SIPA', 'reason': 'pre_upgrade', 'engine': 'postgresql',
+            'schema_revision': before, 'database': backup_file.name, 'sha256': _sha(backup_file)
+        }, indent=2), encoding='utf-8')
+    else:
+        raise RuntimeError('Motore non supportato')
+    upgrade()
+    after = revision()
+    if after != HEAD:
+        raise RuntimeError(f'Migrazione incompleta: {after}; backup: {backup_file}')
+    return {'before': before, 'after': after, 'backup': str(backup_file) if backup_file else None, 'status': 'upgraded'}
