@@ -140,6 +140,6 @@ Il codice del progetto è distribuito secondo la **licenza MIT**, riportata nel 
 
 Repository ufficiale: **https://github.com/bleish-git/sipa**.
 
-**Contatto dell’autore:** `bleish [at] gmail [dot] com` (sostituire `[at]` con `@` e `[dot]` con `.`). L’indirizzo non è un link `mailto:` per ridurre la raccolta automatica più semplice. **L’offuscamento testuale non impedisce ai bot evoluti di ricostruire l’indirizzo**; per minimizzare lo spam, è preferibile usare le *Issues* del repository GitHub per richieste pubbliche e riservare l’email ai contatti privati.
+**Contatto dell’autore:** `bleish [at] gmail [dot] com` (sostituire `[at]` con `@` e `[dot]` con `.`); è preferibile tuttavia usare le *Issues* del repository GitHub per richieste pubbliche e riservare l’email ai contatti privati.
 
 L’avviso di copyright e il testo della licenza MIT nel file `LICENSE` devono rimanere integri nelle redistribuzioni; l’indirizzo email qui indicato non modifica i termini della licenza.
