@@ -1,4 +1,6 @@
 .sipa_audit_key
 __pycache__
 .git
+sipa.db
+env
 
