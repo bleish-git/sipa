@@ -1,46 +1,90 @@
-"""Configurazione persistente del database (senza memorizzare password)."""
+"""Configurazione unica del database SIPA; non salva password in chiaro.
+
+Compatibilità: importa, solo in lettura, la vecchia configurazione per-utente
+quando il file sipa_database.json non esiste ancora.
+"""
 import json
 import os
 from pathlib import Path
 from sqlalchemy.engine import URL
 
-CONFIG_PATH = Path.home() / '.config' / 'sipa' / 'database.json'
-DEFAULT = {'driver': 'sqlite', 'sqlite_path': str(Path(__file__).resolve().parent / 'sipa.db'),
-           'host': '127.0.0.1', 'port': 5432, 'database': 'sipa', 'username': 'sipa', 'sslmode': 'require'}
+BASE = Path(__file__).resolve().parent
+CONFIG = BASE / 'sipa_database.json'
+LEGACY = Path.home() / '.config' / 'sipa' / 'database.json'
+DEFAULT = {
+    'driver': 'sqlite', 'sqlite_path': str(BASE / 'sipa.db'),
+    'host': '127.0.0.1', 'port': 5432, 'database': 'sipa',
+    'username': 'sipa', 'password_env': 'SIPA_PG_PASSWORD',
+    'sslmode': 'require',
+}
+
+
+def _normalized(raw):
+    values = DEFAULT.copy()
+    if 'type' in raw or 'path' in raw:
+        # Formato originale db_config.py (v0.5).
+        values.update(driver=raw.get('type', 'sqlite'),
+                      sqlite_path=raw.get('path') or DEFAULT['sqlite_path'])
+    values.update({key: value for key, value in raw.items() if key in DEFAULT})
+    return values
+
 
 def read_settings():
-    values = DEFAULT.copy()
-    if CONFIG_PATH.is_file():
-        loaded = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
-        values.update({k: v for k, v in loaded.items() if k in DEFAULT})
-    return values
+    source = CONFIG if CONFIG.is_file() else LEGACY
+    if not source.is_file():
+        return DEFAULT.copy()
+    data = json.loads(source.read_text(encoding='utf-8'))
+    if not isinstance(data, dict):
+        raise ValueError('Configurazione database non valida')
+    return _normalized(data)
+
 
 def validate(values):
     driver = values.get('driver')
     if driver not in ('sqlite', 'postgresql'):
-        raise ValueError('Tipo di database non supportato.')
+        raise ValueError('Selezionare SQLite o PostgreSQL')
     if driver == 'sqlite':
-        path = Path(str(values.get('sqlite_path', '')).strip()).expanduser().resolve()
-        if not path.is_file():
-            raise ValueError('Il file SQLite deve esistere. Per creare un nuovo database usare il comando amministrativo da terminale.')
+        path = str(values.get('sqlite_path') or '').strip()
+        if not path:
+            raise ValueError('Specificare il percorso SQLite')
+        resolved = Path(path).expanduser().resolve()
+        if not resolved.parent.is_dir():
+            raise ValueError('La cartella SQLite non esiste')
+        # Un nuovo DB può essere creato dal comando amministrativo, non dal cambio configurazione.
+        if not resolved.is_file():
+            raise ValueError('Il file SQLite non esiste. Crearlo tramite procedura amministrativa.')
     else:
-        if not all(str(values.get(k, '')).strip() for k in ('host', 'database', 'username')):
-            raise ValueError('Host, nome database e utente PostgreSQL sono obbligatori.')
-        port = int(values.get('port', 5432))
+        if not all(str(values.get(k) or '').strip() for k in ('host', 'database', 'username')):
+            raise ValueError('Host, database e utente PostgreSQL obbligatori')
+        try:
+            port = int(values.get('port') or 5432)
+        except (ValueError, TypeError) as exc:
+            raise ValueError('Porta PostgreSQL non valida') from exc
         if not 1 <= port <= 65535:
-            raise ValueError('Porta PostgreSQL non valida.')
+            raise ValueError('Porta PostgreSQL non valida')
+        env = str(values.get('password_env') or '').strip()
+        if not env.isidentifier():
+            raise ValueError('Nome variabile ambiente password non valido')
         if values.get('sslmode') not in ('require', 'verify-ca', 'verify-full'):
-            raise ValueError('Selezionare una modalità TLS sicura.')
+            raise ValueError('Modalità TLS non valida')
+
 
 def save_settings(values):
-    settings = {k: values.get(k, DEFAULT[k]) for k in DEFAULT}
-    validate(settings)
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = CONFIG_PATH.with_suffix('.tmp')
-    tmp.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding='utf-8')
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, CONFIG_PATH)
-    return CONFIG_PATH
+    result = _normalized(values)
+    validate(result)
+    if result['driver'] == 'sqlite':
+        result['sqlite_path'] = str(Path(result['sqlite_path']).expanduser().resolve())
+    else:
+        result['port'] = int(result['port'])
+    tmp = CONFIG.with_suffix('.json.tmp')
+    try:
+        tmp.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, CONFIG)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return CONFIG
+
 
 def database_url():
     override = os.environ.get('SIPA_DB_URL')
@@ -49,12 +93,12 @@ def database_url():
     s = read_settings()
     if s['driver'] == 'sqlite':
         return URL.create('sqlite', database=str(Path(s['sqlite_path']).expanduser().resolve()))
-    return URL.create('postgresql+psycopg', username=s['username'],
-                      password=os.environ.get('SIPA_PG_PASSWORD'), host=s['host'],
-                      port=int(s['port']), database=s['database'],
+    secret = str(s['password_env'])
+    if not secret.isidentifier():
+        raise ValueError('Nome variabile ambiente password non valido')
+    password = os.environ.get(secret)
+    if not password:
+        raise RuntimeError(f'Password PostgreSQL assente: impostare {secret}')
+    return URL.create('postgresql+psycopg', username=s['username'], password=password,
+                      host=s['host'], port=int(s['port']), database=s['database'],
                       query={'sslmode': s['sslmode']})
-
-def describe():
-    s = read_settings()
-    return (f"SQLite: {s['sqlite_path']}" if s['driver'] == 'sqlite' else
-            f"PostgreSQL: {s['host']}:{s['port']}/{s['database']} (TLS {s['sslmode']})")

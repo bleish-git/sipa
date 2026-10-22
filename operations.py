@@ -201,17 +201,17 @@ def maintenance_upgrade(destination):
     elif engine.dialect.name == 'postgresql':
         import subprocess
         from sqlalchemy.engine import make_url
-        from db_config import read_config
+        from db_settings import read_settings
         if not shutil.which('pg_dump'):
             raise RuntimeError('pg_dump non installato: migrazione interrotta prima di modificare il database')
-        c = read_config()
+        c = read_settings()
         url = make_url(str(engine.url))
         password = os.getenv(c.get('password_env', 'SIPA_PG_PASSWORD'))
         if not password:
             raise RuntimeError('Password PostgreSQL non disponibile')
         stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
         backup_file = dest / f'sipa_pre_upgrade_{stamp}.dump'
-        env = {**os.environ, 'PGPASSWORD': password}
+        env = {**os.environ, 'PGPASSWORD': password, 'PGSSLMODE': c.get('sslmode', 'require')}
         args = ['pg_dump', '-Fc', '--no-password', '-h', url.host or 'localhost',
                 '-p', str(url.port or 5432), '-U', url.username, '-f', str(backup_file), url.database]
         result = subprocess.run(args, env=env, capture_output=True, text=True)

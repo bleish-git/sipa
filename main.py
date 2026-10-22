@@ -3,7 +3,7 @@ import sys
 import json
 import traceback
 from pathlib import Path
-from db_config import read_config, save_config
+from db_settings import read_settings, save_settings
 import flet as ft
 from database import init_database, engine, log
 from schema import revision, HEAD
@@ -101,7 +101,7 @@ def main(page: ft.Page):
                 ft.Text('Sistema Informativo Polizia Amministrativa', size=15, text_align=ft.TextAlign.CENTER),
                 ft.Divider(), username, password, error,
                 ft.Button('Accedi', icon=ft.Icons.LOGIN, width=350, on_click=submit),
-                ft.Text('© bleish-git • SIPA v0.5 • Licenza MIT', size=12, color=ft.Colors.GREY_600),
+                ft.Row([ft.Text('© 2026', size=12, color=ft.Colors.GREY_600), ft.TextButton('bleish-git', url='https://github.com/bleish-git/sipa'), ft.Text('• SIPA v0.5 • Licenza MIT', size=12, color=ft.Colors.GREY_600)], spacing=3, alignment=ft.MainAxisAlignment.CENTER),
             ], tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15))
         page.add(ft.Container(content=card, alignment=ft.Alignment.CENTER, expand=True, bgcolor=ft.Colors.BLUE_GREY_50))
         page.update()
@@ -146,7 +146,7 @@ def main(page: ft.Page):
             title = SECTIONS[selected_section][0]
             content.controls.extend([
                 ft.Text(title, size=28, weight=ft.FontWeight.BOLD),
-                ft.Text('© bleish-git • MIT • github.com/bleish-git/sipa', color=ft.Colors.GREY_700),
+                ft.Row([ft.Text('© 2026', color=ft.Colors.GREY_700), ft.TextButton('bleish-git', url='https://github.com/bleish-git/sipa'), ft.Text('• Licenza MIT • github.com/bleish-git/sipa', color=ft.Colors.GREY_700)], spacing=3),
                 ft.Divider(),
             ])
             if selected_section == 5:
@@ -506,29 +506,30 @@ def main(page: ft.Page):
                 notify('Impossibile analizzare il backup: '+str(exc),True)
 
         def database_dialog(e=None):
-            c = read_config()
-            kind = ft.Dropdown(label='Motore database', value=c.get('type', 'sqlite'), width=240,
+            c = read_settings()
+            kind = ft.Dropdown(label='Motore database', value=c.get('driver', 'sqlite'), width=240,
                 options=[ft.dropdown.Option('sqlite', 'SQLite'), ft.dropdown.Option('postgresql', 'PostgreSQL')])
-            path = ft.TextField(label='File SQLite (percorso assoluto)', value=c.get('path', str(Path(__file__).parent / 'sipa.db')), width=550)
+            path = ft.TextField(label='File SQLite (percorso assoluto)', value=c.get('sqlite_path', str(Path(__file__).parent / 'sipa.db')), width=550)
             host = ft.TextField(label='Host PostgreSQL', value=c.get('host', 'localhost'))
             port = ft.TextField(label='Porta', value=str(c.get('port', 5432)))
             dbname = ft.TextField(label='Nome database', value=c.get('database', 'sipa'))
             dbuser = ft.TextField(label='Utente PostgreSQL', value=c.get('username', 'sipa'))
             envname = ft.TextField(label='Variabile ambiente della password', value=c.get('password_env', 'SIPA_PG_PASSWORD'))
+            ssl = ft.Dropdown(label='Sicurezza TLS', value=c.get('sslmode', 'require'), options=[ft.dropdown.Option(x) for x in ('require', 'verify-ca', 'verify-full')])
             info = ft.Text('La password non viene salvata: impostare la variabile ambiente prima di avviare SIPA.', size=12)
             msg = ft.Text(color=ft.Colors.RED_700)
             fields = ft.Column(spacing=8, tight=True)
             def refresh_fields(e=None):
                 value = getattr(getattr(e, 'control', None), 'value', None) or kind.value
-                fields.controls = [path] if value == 'sqlite' else [host, port, dbname, dbuser, envname, info]
+                fields.controls = [path] if value == 'sqlite' else [host, port, dbname, dbuser, envname, ssl, info]
                 page.update()
             kind.on_select = refresh_fields
             kind.on_change = refresh_fields
             def save(e):
                 try:
-                    save_config({'type': kind.value, 'path': path.value, 'host': host.value,
-                                 'port': port.value, 'database': dbname.value, 'username': dbuser.value,
-                                 'password_env': envname.value})
+                    save_settings({'driver': kind.value, 'sqlite_path': path.value, 'host': host.value,
+                                   'port': port.value, 'database': dbname.value, 'username': dbuser.value,
+                                   'password_env': envname.value, 'sslmode': ssl.value})
                     page.pop_dialog()
                     notify('Configurazione salvata. Chiudere SIPA e riavviare. Il nuovo database non viene creato o migrato automaticamente.')
                 except Exception as exc:
