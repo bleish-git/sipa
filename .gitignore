@@ -1,5 +1,10 @@
-.sipa_audit_key
 __pycache__
 .git
 env
-
+*.db
+*.db-*
+*.auditkey
+.sipa_audit_key
+sipa_database.json
+*.dump
+BackupSIPA/

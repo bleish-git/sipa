@@ -170,6 +170,8 @@ def maintenance_upgrade(destination):
     from datetime import datetime, timezone
     from schema import revision, upgrade, HEAD
     before = revision()
+    if before not in (None, '0001_initial', HEAD):
+        raise RuntimeError(f'Revisione sconosciuta: {before}; aggiornamento bloccato.')
     if before == HEAD:
         return {'before': before, 'after': before, 'backup': None, 'status': 'already_current'}
     dest = Path(destination).expanduser().resolve()
@@ -218,10 +220,20 @@ def maintenance_upgrade(destination):
         if result.returncode or not backup_file.is_file() or backup_file.stat().st_size == 0:
             backup_file.unlink(missing_ok=True)
             raise RuntimeError('Backup PostgreSQL non riuscito: ' + result.stderr[-500:])
-        backup_file.with_suffix('.json').write_text(json.dumps({
-            'application': 'SIPA', 'reason': 'pre_upgrade', 'engine': 'postgresql',
-            'schema_revision': before, 'database': backup_file.name, 'sha256': _sha(backup_file)
-        }, indent=2), encoding='utf-8')
+        # Verifica che l'archivio pg_dump sia effettivamente leggibile.
+        if not shutil.which('pg_restore'):
+            raise RuntimeError('pg_restore non disponibile: impossibile verificare il backup')
+        check = subprocess.run(['pg_restore', '--list', str(backup_file)], capture_output=True, text=True)
+        if check.returncode or not check.stdout.strip():
+            raise RuntimeError('Verifica archivio PostgreSQL fallita: migrazione annullata')
+        manifest = {'application': 'SIPA', 'reason': 'pre_upgrade', 'engine': 'postgresql',
+                    'schema_revision': before, 'database': backup_file.name, 'sha256': _sha(backup_file)}
+        if KEY.exists():
+            key_file = backup_file.with_suffix('.auditkey')
+            shutil.copy2(KEY, key_file)
+            os.chmod(key_file, 0o600)
+            manifest.update(audit_key=key_file.name, audit_key_sha256=_sha(key_file))
+        backup_file.with_suffix('.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
     else:
         raise RuntimeError('Motore non supportato')
     upgrade()

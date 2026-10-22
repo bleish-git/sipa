@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 from sqlalchemy.engine import URL
+from sqlalchemy import create_engine, text
 
 BASE = Path(__file__).resolve().parent
 CONFIG = BASE / 'sipa_database.json'
@@ -69,9 +70,41 @@ def validate(values):
             raise ValueError('Modalità TLS non valida')
 
 
-def save_settings(values):
+def test_connection(values, *, allow_new_sqlite=False):
+    """Test real connectivity; do not persist untested settings."""
     result = _normalized(values)
-    validate(result)
+    if result['driver'] == 'sqlite' and allow_new_sqlite:
+        target = Path(result['sqlite_path']).expanduser().resolve()
+        if not target.parent.is_dir():
+            raise ValueError('La directory SQLite non esiste')
+        if target.exists() and not target.is_file():
+            raise ValueError('Il percorso SQLite non è un file')
+    else:
+        validate(result)
+    if result['driver'] == 'sqlite':
+        url = URL.create('sqlite', database=str(Path(result['sqlite_path']).expanduser().resolve()))
+    else:
+        env = result['password_env']
+        password = os.environ.get(env)
+        if not password:
+            raise RuntimeError(f'Password PostgreSQL assente: impostare {env}')
+        url = URL.create('postgresql+psycopg', username=result['username'], password=password,
+                         host=result['host'], port=int(result['port']), database=result['database'],
+                         query={'sslmode': result['sslmode'], 'connect_timeout': '5'})
+    test_engine = create_engine(url, pool_pre_ping=True, connect_args={'timeout': 5} if result['driver']=='sqlite' else {})
+    try:
+        with test_engine.connect() as conn:
+            conn.execute(text('SELECT 1'))
+    finally:
+        test_engine.dispose()
+    return result
+
+
+def save_settings(values, *, initial=False):
+    result = _normalized(values)
+    if not initial and result['driver'] != read_settings()['driver']:
+        raise ValueError('Il motore database non può essere modificato dalla configurazione amministrativa.')
+    test_connection(result, allow_new_sqlite=initial)
     if result['driver'] == 'sqlite':
         result['sqlite_path'] = str(Path(result['sqlite_path']).expanduser().resolve())
     else:
@@ -87,9 +120,6 @@ def save_settings(values):
 
 
 def database_url():
-    override = os.environ.get('SIPA_DB_URL')
-    if override:
-        return override
     s = read_settings()
     if s['driver'] == 'sqlite':
         return URL.create('sqlite', database=str(Path(s['sqlite_path']).expanduser().resolve()))

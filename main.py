@@ -1,5 +1,9 @@
 """SIPA - Sistema Informativo Polizia Amministrativa."""
 import sys
+if '--init-admin' in sys.argv:
+    from init_setup import init_admin
+    init_admin()
+    raise SystemExit(0)
 import json
 import traceback
 from pathlib import Path
@@ -101,7 +105,7 @@ def main(page: ft.Page):
                 ft.Text('Sistema Informativo Polizia Amministrativa', size=15, text_align=ft.TextAlign.CENTER),
                 ft.Divider(), username, password, error,
                 ft.Button('Accedi', icon=ft.Icons.LOGIN, width=350, on_click=submit),
-                ft.Row([ft.Text('© 2026', size=12, color=ft.Colors.GREY_600), ft.TextButton('bleish-git', url='https://github.com/bleish-git/sipa'), ft.Text('• SIPA v0.5 • Licenza MIT', size=12, color=ft.Colors.GREY_600)], spacing=3, alignment=ft.MainAxisAlignment.CENTER),
+                ft.Row([ft.Text('© 2026', size=12, color=ft.Colors.GREY_600), ft.TextButton('bleish', url='https://github.com/bleish-git/sipa'), ft.Text('• SIPA v0.5 • Licenza MIT', size=12, color=ft.Colors.GREY_600)], spacing=3, alignment=ft.MainAxisAlignment.CENTER),
             ], tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15))
         page.add(ft.Container(content=card, alignment=ft.Alignment.CENTER, expand=True, bgcolor=ft.Colors.BLUE_GREY_50))
         page.update()
@@ -146,7 +150,7 @@ def main(page: ft.Page):
             title = SECTIONS[selected_section][0]
             content.controls.extend([
                 ft.Text(title, size=28, weight=ft.FontWeight.BOLD),
-                ft.Row([ft.Text('© 2026', color=ft.Colors.GREY_700), ft.TextButton('bleish-git', url='https://github.com/bleish-git/sipa'), ft.Text('• Licenza MIT • github.com/bleish-git/sipa', color=ft.Colors.GREY_700)], spacing=3),
+                ft.Row([ft.Text('© 2026', color=ft.Colors.GREY_700), ft.TextButton('bleish', url='https://github.com/bleish-git/sipa'), ft.Text('• Licenza MIT • github.com/bleish-git/sipa', color=ft.Colors.GREY_700)], spacing=3),
                 ft.Divider(),
             ])
             if selected_section == 5:
@@ -507,7 +511,7 @@ def main(page: ft.Page):
 
         def database_dialog(e=None):
             c = read_settings()
-            kind = ft.Dropdown(label='Motore database', value=c.get('driver', 'sqlite'), width=240,
+            kind = ft.Dropdown(label='Motore database (fisso)', disabled=True, value=c.get('driver', 'sqlite'), width=240,
                 options=[ft.dropdown.Option('sqlite', 'SQLite'), ft.dropdown.Option('postgresql', 'PostgreSQL')])
             path = ft.TextField(label='File SQLite (percorso assoluto)', value=c.get('sqlite_path', str(Path(__file__).parent / 'sipa.db')), width=550)
             host = ft.TextField(label='Host PostgreSQL', value=c.get('host', 'localhost'))
@@ -527,17 +531,17 @@ def main(page: ft.Page):
             kind.on_change = refresh_fields
             def save(e):
                 try:
-                    save_settings({'driver': kind.value, 'sqlite_path': path.value, 'host': host.value,
+                    save_settings({'driver': c['driver'], 'sqlite_path': path.value, 'host': host.value,
                                    'port': port.value, 'database': dbname.value, 'username': dbuser.value,
                                    'password_env': envname.value, 'sslmode': ssl.value})
                     page.pop_dialog()
-                    notify('Configurazione salvata. Chiudere SIPA e riavviare. Il nuovo database non viene creato o migrato automaticamente.')
+                    notify('Connessione verificata e configurazione salvata. Riavviare SIPA per applicarla.')
                 except Exception as exc:
                     msg.value = str(exc)
                     page.update()
             dlg = ft.AlertDialog(modal=True, title=ft.Text('Configurazione database'),
                 content=ft.Column([kind, fields, msg,
-                    ft.Text('ATTENZIONE: il cambio motore non trasferisce i dati. Eseguire una migrazione separata e verificata.', size=12)],
+                    ft.Text('Il motore è bloccato. La nuova connessione viene verificata prima del salvataggio; riavviare SIPA per applicarla.', size=12)],
                     width=580, tight=True, scroll=ft.ScrollMode.AUTO),
                 actions=[ft.TextButton('Annulla', on_click=lambda e: page.pop_dialog()),
                          ft.Button('Salva configurazione', on_click=save)])
@@ -599,7 +603,7 @@ def main(page: ft.Page):
 if __name__ == '__main__':
     if revision() != HEAD:
         raise SystemExit(f'Schema non aggiornato: {revision() or "non versionato"}. Eseguire: python cli.py upgrade-db --backup-dir ~/BackupSIPA')
-    if '--init-admin' in sys.argv:
+    if '--bootstrap-only' in sys.argv:
         init_database()
         bootstrap()
     else:

@@ -8,7 +8,7 @@
 
 SIPA offre un'interfaccia grafica realizzata con **Flet**, utilizza **SQLAlchemy** per l'accesso ai dati e **Alembic** per le migrazioni dello schema. Sono previste configurazioni per **SQLite** e **PostgreSQL**. L'utilizzo con più postazioni e un database centralizzato richiede un'adeguata architettura di distribuzione e la verifica dei controlli di sicurezza.
 
-### Funzionalità
+## Funzionalità disponibili
 
 - **Autenticazione e utenti:** accesso e disconnessione, password protette con PBKDF2 e salt, creazione e gestione degli utenti, disattivazione e riattivazione, reimpostazione password e cambio obbligatorio dopo il reset.
 - **Ruoli e autorizzazioni:** quattro ruoli (`admin`, `responsabile`, `operatore`, `consultazione`), permessi granulari e matrice dei permessi modificabile dall'amministratore.
@@ -28,7 +28,9 @@ Le voci di navigazione relative a **Sanzioni amministrative**, **Accertamenti** 
 - Linux Mint/Linux per i comandi qui riportati. Per Windows cambiano i comandi di attivazione dell'ambiente virtuale.
 - Per i backup preventivi di PostgreSQL: eseguibile `pg_dump` installato e disponibile nel `PATH`.
 
-## Installazione
+## Installazione e comandi operativi
+
+### 1. Installare dipendenze e ambiente Python
 
 Aprire il terminale nella directory del progetto (adattare il percorso):
 
@@ -43,25 +45,17 @@ Per le sessioni successive è sufficiente riattivare l'ambiente con `source .ven
 
 ### Prima inizializzazione del database e dell'amministratore
 
-Nella **versione 0.5** le migrazioni non vengono eseguite automaticamente all'avvio. Per una nuova installazione con SQLite predefinito, inizializzare prima lo schema:
-
-```bash
-python cli.py db-version
-python cli.py upgrade-db --backup-dir ~/BackupSIPA
-python cli.py db-version
-```
-
-Poi creare il primo amministratore:
+In SIPA 0.5 la scelta del motore avviene durante l'inizializzazione, prima della creazione dell'amministratore:
 
 ```bash
 python main.py --init-admin
 ```
 
-La procedura richiede le credenziali iniziali e una password di almeno **12 caratteri**. Non sono previste credenziali predefinite. Con la configurazione standard SQLite, il file del database è `sipa.db` nella directory del progetto.
+La procedura richiede SQLite o PostgreSQL e i relativi parametri, verifica la connessione con `SELECT 1`, salva la configurazione e lancia l'aggiornamento esplicito dello schema (con backup preventivo se il database esiste). Infine richiede username e password amministratore di almeno 12 caratteri. Per PostgreSQL occorre predisporre un database raggiungibile e impostare nell'ambiente la variabile della password indicata; servono `pg_dump` e `pg_restore` per i backup prima delle migrazioni. Il motore non può essere modificato successivamente dal menu Amministrazione.
 
 **Installazione su database già esistente:** prima di eseguire qualsiasi aggiornamento, conservare una copia del database e della chiave audit. Controllare la revisione con `python cli.py db-version` e applicare eventuali migrazioni con il comando esplicito `upgrade-db`. Non rieseguire `--init-admin` se l'amministratore esiste già.
 
-## Comandi amministrativi da terminale (`cli.py`)
+### 3. Comandi amministrativi da terminale (`cli.py`)
 
 Eseguire i comandi dalla directory SIPA, con l'ambiente virtuale attivo e, per le operazioni di manutenzione, con l'applicazione chiusa.
 
@@ -94,9 +88,9 @@ Il backup manuale produce un file `.db`, un manifest `.json` con checksum SHA256
 
 Il ripristino **non sovrascrive** automaticamente il database in uso. Chiudere SIPA, archiviare in un luogo sicuro il database corrente e la sua chiave audit, verificare il backup e soltanto dopo lanciare il comando `restore`. Evitare operazioni concorrenti da altre postazioni.
 
-## Configurazione del database
+## Impostazioni del database
 
-La sezione **Amministrazione → Configura database** consente di scegliere il motore e salvare le impostazioni per il riavvio successivo. Il modulo di configurazione è **`db_settings.py`**; il file delle impostazioni è **`sipa_database.json`** nella directory SIPA. `db_config.py` non è più richiesto dopo l'applicazione della patch di unificazione della v0.5.
+La sezione **Amministrazione → Configura database** mostra il motore scelto (non modificabile) e consente di aggiornare solo i parametri di connessione, dopo verifica della raggiungibilità. Il modulo di configurazione è **`db_settings.py`**; il file delle impostazioni è **`sipa_database.json`** nella directory SIPA. `db_config.py` non è più richiesto dopo l'applicazione della patch di unificazione della v0.5.
 
 **SQLite:** percorso del file `.db`. È la configurazione predefinita, adatta all'uso locale. Non utilizzare un file SQLite condiviso via SMB come database concorrente per più client.
 
@@ -109,7 +103,7 @@ export SIPA_PG_PASSWORD='password_da_impostare_localmente'
 python main.py
 ```
 
-L'ambiente deve contenere la variabile anche quando vengono eseguiti i comandi `cli.py`. È inoltre possibile specificare un URL SQLAlchemy tramite `SIPA_DB_URL`, che ha precedenza sulla configurazione salvata: usare questa possibilità con attenzione, perché può indirizzare l'applicazione verso un database diverso da quello mostrato nella schermata di configurazione.
+L'ambiente deve contenere la variabile anche quando vengono eseguiti i comandi `cli.py`. La configurazione attiva è letta dal file `sipa_database.json`; non sono previsti override tramite URL ambientali.
 
 **La selezione del motore non importa né converte i dati esistenti.** Prima di usare PostgreSQL con dati operativi, verificare connettività, certificati TLS, permessi, backup, ripristino e compatibilità delle migrazioni.
 
@@ -138,10 +132,14 @@ Per predisporre una build Windows, installare le dipendenze su una macchina Wind
 - Per l'utilizzo da più postazioni occorre definire e collaudare un'architettura centralizzata con autorizzazioni lato server, gestione delle sessioni, protezione TLS, controlli sugli accessi e procedure di disaster recovery.
 - Pianificare backup periodici, conservazione delle copie e prove effettive di ripristino: il solo checksum non garantisce la recuperabilità dell'intero sistema.
 
-## Licenza e attribuzione
+## Licenza, copyright e contatti
 
-**© 2026 [bleish-git](https://github.com/bleish-git/sipa)** — SIPA, Sistema Informativo Polizia Amministrativa.
+**© 2026 [bleish](https://github.com/bleish-git/sipa)** — SIPA, Sistema Informativo Polizia Amministrativa.
 
 Il codice del progetto è distribuito secondo la **licenza MIT**, riportata nel file [`LICENSE`](LICENSE). La licenza permette uso, modifica e redistribuzione, anche commerciale, purché siano mantenuti gli avvisi di copyright e di licenza previsti dal testo MIT. Le dipendenze di terze parti restano soggette alle rispettive licenze.
 
 Repository ufficiale: **https://github.com/bleish-git/sipa**.
+
+**Contatto dell’autore:** `bleish [at] gmail [dot] com` (sostituire `[at]` con `@` e `[dot]` con `.`). L’indirizzo non è un link `mailto:` per ridurre la raccolta automatica più semplice. **L’offuscamento testuale non impedisce ai bot evoluti di ricostruire l’indirizzo**; per minimizzare lo spam, è preferibile usare le *Issues* del repository GitHub per richieste pubbliche e riservare l’email ai contatti privati.
+
+L’avviso di copyright e il testo della licenza MIT nel file `LICENSE` devono rimanere integri nelle redistribuzioni; l’indirizzo email qui indicato non modifica i termini della licenza.
