@@ -1,6 +1,6 @@
 # SIPA — Sistema Informativo Polizia Amministrativa
 
-**Versione 0.5** · Applicazione desktop in Python per la gestione delle attività di polizia amministrativa.
+**Versione 0.55** · Applicazione desktop in Python per la gestione delle attività di polizia amministrativa.
 
 [Repository GitHub — bleish-git/sipa](https://github.com/bleish-git/sipa) · **Licenza MIT**
 
@@ -43,17 +43,28 @@ python -m pip install -r requirements.txt
 
 Per le sessioni successive è sufficiente riattivare l'ambiente con `source .venv/bin/activate`.
 
-### Prima inizializzazione del database e dell'amministratore
+### 2. Prima configurazione grafica o da terminale
 
-In SIPA 0.5 la scelta del motore avviene durante l'inizializzazione, prima della creazione dell'amministratore:
+Con `python main.py`, se `sipa_database.json` è già presente SIPA si avvia normalmente, dopo il controllo della versione dello schema. Se il file manca si apre automaticamente la **configurazione guidata grafica**.
+
+La procedura chiede prima username e password amministrativi, poi consente di scegliere:
+
+- **Crea nuovo database:** crea lo schema in un file SQLite nuovo, oppure su un database PostgreSQL predisposto e vuoto; crea il primo amministratore (password di almeno 12 caratteri).
+- **Collega database esistente:** controlla connessione, tabelle e colonne richieste, revisione Alembic, presenza degli utenti e credenziali di un account amministratore già presente. Il controllo è in sola lettura: nessuna migrazione, scrittura o creazione di utenti. Uno schema incompatibile viene rifiutato.
+
+È possibile configurare **SQLite** oppure **PostgreSQL**. Per SQLite viene mostrato l'avviso che **non è consigliato l'uso del file su condivisioni di rete o con client concorrenti**. Per PostgreSQL occorre rendere disponibile sul PC la variabile d'ambiente contenente la password del server (predefinita `SIPA_PG_PASSWORD`).
+
+Alla conclusione della configurazione, chiudere la finestra e **riavviare SIPA**.
+
+La stessa procedura è disponibile da terminale senza interfaccia grafica:
 
 ```bash
 python main.py --init-admin
 ```
 
-La procedura richiede SQLite o PostgreSQL e i relativi parametri, verifica la connessione con `SELECT 1`, salva la configurazione e lancia l'aggiornamento esplicito dello schema (con backup preventivo se il database esiste). Infine richiede username e password amministratore di almeno 12 caratteri. Per PostgreSQL occorre predisporre un database raggiungibile e impostare nell'ambiente la variabile della password indicata; servono `pg_dump` e `pg_restore` per i backup prima delle migrazioni. Il motore non può essere modificato successivamente dal menu Amministrazione.
+**Secondo PC:** installare SIPA, eseguire `python main.py`, selezionare **Collega database esistente**, inserire i parametri e autenticarsi con un amministratore già registrato. Se il database ha registrazioni audit, fornire anche la chiave `.sipa_audit_key` originale tramite percorso locale sicuro: la procedura ne verifica la corrispondenza senza cambiare il database e ne conserva una copia protetta nella cartella SIPA. Non creare una nuova chiave per un archivio già utilizzato. Non scegliere «Crea nuovo» e non effettuare migrazioni su ogni client.
 
-**Installazione su database già esistente:** prima di eseguire qualsiasi aggiornamento, conservare una copia del database e della chiave audit. Controllare la revisione con `python cli.py db-version` e applicare eventuali migrazioni con il comando esplicito `upgrade-db`. Non rieseguire `--init-admin` se l'amministratore esiste già.
+**Installazione già funzionante:** conservando `sipa_database.json` SIPA non avvia la procedura iniziale; nessuna reinizializzazione è richiesta.
 
 ### 3. Comandi amministrativi da terminale (`cli.py`)
 
@@ -90,7 +101,7 @@ Il ripristino **non sovrascrive** automaticamente il database in uso. Chiudere S
 
 ## Impostazioni del database
 
-La sezione **Amministrazione → Configura database** mostra il motore scelto (non modificabile) e consente di aggiornare solo i parametri di connessione, dopo verifica della raggiungibilità. Il modulo di configurazione è **`db_settings.py`**; il file delle impostazioni è **`sipa_database.json`** nella directory SIPA. `db_config.py` non è più richiesto dopo l'applicazione della patch di unificazione della v0.5.
+La sezione **Amministrazione → Configura database** mostra il motore scelto (non modificabile) e consente di aggiornare solo i parametri di connessione, dopo verifica della raggiungibilità. Il modulo di configurazione è **`db_settings.py`**; il file delle impostazioni è **`sipa_database.json`** nella directory SIPA. Ogni postazione mantiene la propria configurazione locale.
 
 **SQLite:** percorso del file `.db`. È la configurazione predefinita, adatta all'uso locale. Non utilizzare un file SQLite condiviso via SMB come database concorrente per più client.
 
@@ -109,7 +120,7 @@ L'ambiente deve contenere la variabile anche quando vengono eseguiti i comandi `
 
 ## Avvio dell'applicazione
 
-Dopo l'inizializzazione e gli eventuali aggiornamenti:
+Dopo la configurazione e gli eventuali aggiornamenti:
 
 ```bash
 cd /home/bleish/Scrivania/sipa
@@ -140,6 +151,6 @@ Il codice del progetto è distribuito secondo la **licenza MIT**, riportata nel 
 
 Repository ufficiale: **https://github.com/bleish-git/sipa**.
 
-**Contatto dell’autore:** `bleish [at] gmail [dot] com` (sostituire `[at]` con `@` e `[dot]` con `.`); è preferibile tuttavia usare le *Issues* del repository GitHub per richieste pubbliche e riservare l’email ai contatti privati.
+**Contatto dell’autore:** `bleish [at] gmail [dot] com` (sostituire `[at]` con `@` e `[dot]` con `.`). L’indirizzo non è un link `mailto:` per ridurre la raccolta automatica più semplice. **L’offuscamento testuale non impedisce ai bot evoluti di ricostruire l’indirizzo**; per minimizzare lo spam, è preferibile usare le *Issues* del repository GitHub per richieste pubbliche e riservare l’email ai contatti privati.
 
 L’avviso di copyright e il testo della licenza MIT nel file `LICENSE` devono rimanere integri nelle redistribuzioni; l’indirizzo email qui indicato non modifica i termini della licenza.

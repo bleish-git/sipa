@@ -75,7 +75,7 @@ def backup(destination):
             shutil.copy2(KEY, key_dest)
             os.chmod(key_dest, 0o600)
             key_name, key_hash = key_dest.name, _sha(key_dest)
-        manifest = {'format': 2, 'application': 'SIPA', 'application_version': '0.5',
+        manifest = {'format': 2, 'application': 'SIPA', 'application_version': '0.55',
                     'engine': 'sqlite', 'schema_revision': _revision(target),
                     'created_at': datetime.now(timezone.utc).isoformat(),
                     'database': target.name, 'sha256': _sha(target),

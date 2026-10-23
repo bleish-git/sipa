@@ -1,9 +1,18 @@
 """SIPA - Sistema Informativo Polizia Amministrativa."""
 import sys
-if '--init-admin' in sys.argv:
-    from init_setup import init_admin
-    init_admin()
-    raise SystemExit(0)
+from db_settings import CONFIG
+
+# First-run setup must happen before importing database, which creates the engine.
+if __name__ == '__main__':
+    if '--init-admin' in sys.argv:
+        from setup_wizard import cli_setup
+        cli_setup()
+        raise SystemExit(0)
+    if not CONFIG.exists():
+        from setup_wizard import launch_gui
+        launch_gui()
+        raise SystemExit(0)
+
 import json
 import traceback
 from pathlib import Path
@@ -105,7 +114,7 @@ def main(page: ft.Page):
                 ft.Text('Sistema Informativo Polizia Amministrativa', size=15, text_align=ft.TextAlign.CENTER),
                 ft.Divider(), username, password, error,
                 ft.Button('Accedi', icon=ft.Icons.LOGIN, width=350, on_click=submit),
-                ft.Row([ft.Text('© 2026', size=12, color=ft.Colors.GREY_600), ft.TextButton('bleish', url='https://github.com/bleish-git/sipa'), ft.Text('• SIPA v0.5 • Licenza MIT', size=12, color=ft.Colors.GREY_600)], spacing=3, alignment=ft.MainAxisAlignment.CENTER),
+                ft.Row([ft.Text('© 2026', size=12, color=ft.Colors.GREY_600), ft.TextButton('bleish', url='https://github.com/bleish-git/sipa'), ft.Text('• SIPA v0.55 • Licenza MIT', size=12, color=ft.Colors.GREY_600)], spacing=3, alignment=ft.MainAxisAlignment.CENTER),
             ], tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15))
         page.add(ft.Container(content=card, alignment=ft.Alignment.CENTER, expand=True, bgcolor=ft.Colors.BLUE_GREY_50))
         page.update()
