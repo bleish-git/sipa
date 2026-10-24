@@ -18,7 +18,9 @@ from sqlalchemy.orm import Session
 
 from db_settings import CONFIG, DEFAULT, database_url, save_settings, test_connection
 
-EXPECTED_REVISION = '0002_attivita_economiche'
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+EXPECTED_REVISION = ScriptDirectory.from_config(Config(str(Path(__file__).resolve().parent / 'alembic.ini'))).get_current_head()
 REQUIRED_COLUMNS = {
     'users': {'id','username','salt','password_hash','role','active','must_change_password','failed_attempts','locked_until'},
     'attivita_economiche': {'id','nome','titolare','pec','descrizione','note','data_inizio','data_cessazione'},
@@ -54,12 +56,15 @@ def inspect_existing(values, username, password, audit_key_path=None):
     """Only SELECT and metadata reads; rejects incompatible DB without mutating it."""
     if values['driver'] == 'sqlite' and not Path(values['sqlite_path']).expanduser().is_file():
         raise ValueError('Il database SQLite indicato non esiste.')
-    test_connection(values)
+    if values['driver'] != 'sqlite':
+        test_connection(values)
     # No database/security imports: these modules create a global engine on import.
     from sqlalchemy import inspect as sa_inspect
     engine = _engine(values, readonly=(values['driver'] == 'sqlite'))
     try:
         with engine.connect() as conn:
+            if values['driver'] == 'postgresql':
+                conn.exec_driver_sql('SET TRANSACTION READ ONLY')
             names = set(sa_inspect(conn).get_table_names())
             required = set(REQUIRED_COLUMNS) | {'alembic_version'}
             missing = required - names

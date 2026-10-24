@@ -2,11 +2,12 @@
 from pathlib import Path
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import inspect, text
 from database import engine, Base
 
 BASE = Path(__file__).resolve().parent
-HEAD = '0002_attivita_economiche'
+HEAD = ScriptDirectory.from_config(Config(str(Path(__file__).resolve().parent / 'alembic.ini'))).get_current_head()
 
 def config():
     return Config(str(BASE / 'alembic.ini'))

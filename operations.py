@@ -52,6 +52,9 @@ def _revision(path):
         return row[0] if row else 'non versionato'
 
 def backup(destination):
+    if engine.dialect.name == 'postgresql':
+        from pg_backup import backup_sql
+        return backup_sql(destination)
     from datetime import datetime, timezone
     from schema import check_current
     check_current()
@@ -88,6 +91,9 @@ def backup(destination):
         raise
 
 def inspect_backup(backup_file):
+    if str(backup_file).lower().endswith('.sql'):
+        from pg_backup import inspect_sql
+        return inspect_sql(backup_file)
     source = Path(backup_file).expanduser().resolve()
     manifest_file = source.with_suffix('.json')
     if not source.is_file() or not manifest_file.is_file():
@@ -122,12 +128,26 @@ def inspect_backup(backup_file):
             'changed_column_types':changed_types,
             'key_present':bool(key_source), 'manifest':manifest}
 
+def require_supported_backup_revision(backup_revision):
+    """Blocca il ripristino di archivi più nuovi o con revisione non riconosciuta."""
+    from alembic.script import ScriptDirectory
+    from schema import config, HEAD
+    script = ScriptDirectory.from_config(config())
+    known = {r.revision for r in script.iterate_revisions(HEAD, 'base')}
+    if backup_revision not in known:
+        raise RuntimeError(f'Backup con revisione {backup_revision!r} non supportata da SIPA (richiesta: {HEAD}). Ripristino annullato.')
+
+
 def restore(backup_file, confirmation):
     """Offline only: atomic replacement of DB and key after all validations.
     Refuses existing database: safe explicit move/archive required before CLI restore.
     """
+    if str(backup_file).lower().endswith('.sql'):
+        from pg_backup import restore_sql
+        return restore_sql(backup_file, confirmation)
     if confirmation != 'RIPRISTINA SIPA': raise ValueError('Conferma esplicita mancante.')
     report = inspect_backup(backup_file)
+    require_supported_backup_revision(report['schema_backup'])
     source = Path(report['file'])
     manifest = report['manifest']
     target = _sqlite_path()
@@ -170,8 +190,11 @@ def maintenance_upgrade(destination):
     from datetime import datetime, timezone
     from schema import revision, upgrade, HEAD
     before = revision()
-    if before not in (None, '0001_initial', HEAD):
-        raise RuntimeError(f'Revisione sconosciuta: {before}; aggiornamento bloccato.')
+    from alembic.script import ScriptDirectory
+    from schema import config
+    known = {r.revision for r in ScriptDirectory.from_config(config()).iterate_revisions(HEAD, 'base')}
+    if before is not None and before not in known:
+        raise RuntimeError(f'Revisione sconosciuta o più recente: {before}; aggiornamento bloccato.')
     if before == HEAD:
         return {'before': before, 'after': before, 'backup': None, 'status': 'already_current'}
     dest = Path(destination).expanduser().resolve()
@@ -201,39 +224,9 @@ def maintenance_upgrade(destination):
             backup_file.with_suffix('.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
             inspect_backup(backup_file)
     elif engine.dialect.name == 'postgresql':
-        import subprocess
-        from sqlalchemy.engine import make_url
-        from db_settings import read_settings
-        if not shutil.which('pg_dump'):
-            raise RuntimeError('pg_dump non installato: migrazione interrotta prima di modificare il database')
-        c = read_settings()
-        url = make_url(str(engine.url))
-        password = os.getenv(c.get('password_env', 'SIPA_PG_PASSWORD'))
-        if not password:
-            raise RuntimeError('Password PostgreSQL non disponibile')
-        stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
-        backup_file = dest / f'sipa_pre_upgrade_{stamp}.dump'
-        env = {**os.environ, 'PGPASSWORD': password, 'PGSSLMODE': c.get('sslmode', 'require')}
-        args = ['pg_dump', '-Fc', '--no-password', '-h', url.host or 'localhost',
-                '-p', str(url.port or 5432), '-U', url.username, '-f', str(backup_file), url.database]
-        result = subprocess.run(args, env=env, capture_output=True, text=True)
-        if result.returncode or not backup_file.is_file() or backup_file.stat().st_size == 0:
-            backup_file.unlink(missing_ok=True)
-            raise RuntimeError('Backup PostgreSQL non riuscito: ' + result.stderr[-500:])
-        # Verifica che l'archivio pg_dump sia effettivamente leggibile.
-        if not shutil.which('pg_restore'):
-            raise RuntimeError('pg_restore non disponibile: impossibile verificare il backup')
-        check = subprocess.run(['pg_restore', '--list', str(backup_file)], capture_output=True, text=True)
-        if check.returncode or not check.stdout.strip():
-            raise RuntimeError('Verifica archivio PostgreSQL fallita: migrazione annullata')
-        manifest = {'application': 'SIPA', 'reason': 'pre_upgrade', 'engine': 'postgresql',
-                    'schema_revision': before, 'database': backup_file.name, 'sha256': _sha(backup_file)}
-        if KEY.exists():
-            key_file = backup_file.with_suffix('.auditkey')
-            shutil.copy2(KEY, key_file)
-            os.chmod(key_file, 0o600)
-            manifest.update(audit_key=key_file.name, audit_key_sha256=_sha(key_file))
-        backup_file.with_suffix('.json').write_text(json.dumps(manifest, indent=2), encoding='utf-8')
+        from pg_backup import backup_sql, inspect_sql
+        backup_file = backup_sql(dest, require_current=False)
+        inspect_sql(backup_file)
     else:
         raise RuntimeError('Motore non supportato')
     upgrade()

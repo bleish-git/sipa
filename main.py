@@ -16,7 +16,7 @@ if __name__ == '__main__':
 import json
 import traceback
 from pathlib import Path
-from db_settings import read_settings, save_settings
+from db_settings import read_settings
 import flet as ft
 from database import init_database, engine, log
 from schema import revision, HEAD
@@ -25,6 +25,7 @@ from sqlalchemy.orm import Session
 from security import (authenticate, bootstrap, has_permission, role_permissions, set_role_permissions, list_users, list_events, create_user,
                       update_user, reset_password, change_password)
 
+from db_admin_guide import DB_ADMIN_GUIDE
 ASSETS = Path(__file__).resolve().parent / 'assets'
 SECTIONS = [
     ('Dashboard', ft.Icons.DASHBOARD_OUTLINED),
@@ -468,7 +469,7 @@ def main(page: ft.Page):
             directory = ft.TextField(label='Cartella di destinazione', value=str(Path.home() / 'BackupSIPA'), width=500)
             message = ft.Text(color=ft.Colors.RED_700)
             dlg = ft.AlertDialog(modal=True, title=ft.Text('Crea backup SIPA'),
-                content=ft.Column([ft.Text('Backup completo SQLite, versione dello schema e chiave audit. Non include allegati esterni.'),directory,message],tight=True,width=540),actions=[])
+                content=ft.Column([ft.Text('Backup del motore corrente: SQLite (.db) o PostgreSQL (.sql). Include manifest e, se presente, chiave audit; esclude file esterni.'),directory,message],tight=True,width=540),actions=[])
             def save(e):
                 try:
                     path=create_backup(directory.value)
@@ -482,14 +483,28 @@ def main(page: ft.Page):
 
         async def restore_picker(e=None):
             try:
-                files = await ft.FilePicker().pick_files(allow_multiple=False, dialog_title='Seleziona backup SIPA (.db)',
-                                                        file_type=ft.FilePickerFileType.CUSTOM, allowed_extensions=['db'])
+                files = await ft.FilePicker().pick_files(allow_multiple=False, dialog_title='Seleziona backup SIPA (.db o .sql)',
+                                                        file_type=ft.FilePickerFileType.CUSTOM, allowed_extensions=['db', 'sql'])
                 if not files: return
                 path = files[0].path
                 if not path:
                     notify('Il selettore non ha restituito un percorso locale.',True)
                     return
                 report = inspect_backup(path)
+                if str(path).lower().endswith('.sql'):
+                    description = ('Backup PostgreSQL: '+str(report['file'])+'\n'
+                        +'Revisione backup: '+str(report['schema_backup'])+'\n'
+                        +'Revisione richiesta: '+str(report['schema_required'])+'\n'
+                        +'Compatibile con la versione corrente: '+('Sì' if report['compatible'] else 'NO: necessario upgrade offline dopo il ripristino')+'\n'
+                        +'Checksum SQL e chiave audit (se presente): verificati.\n'
+                        +'Per PostgreSQL il confronto delle singole colonne non è disponibile; ripristino SOLO da terminale su database VUOTO.')
+                    dlg=ft.AlertDialog(modal=True,title=ft.Text('Verifica backup PostgreSQL'),
+                        content=ft.Column([ft.Text(description,selectable=True),ft.Text('Per il ripristino: chiudere tutti i client, predisporre un database PostgreSQL vuoto, controllare la configurazione e usare il comando riportato sotto.'),
+                         ft.Text('python cli.py restore '+repr(path)+' --confirm \"RIPRISTINA SIPA\"',selectable=True)],
+                         width=690,height=340,scroll=ft.ScrollMode.AUTO),
+                        actions=[ft.TextButton('Chiudi',on_click=lambda e:page.pop_dialog())])
+                    page.show_dialog(dlg)
+                    return
                 def lines(label, value):
                     return label+': '+(json.dumps(value,ensure_ascii=False) if value else 'nessuna')
                 description='\n'.join([
@@ -511,7 +526,7 @@ def main(page: ft.Page):
                         ft.Text('Per sicurezza, il ripristino si esegue solo a SIPA chiuso tramite CLI. Archivia prima database e chiave correnti. Nessun dato è stato modificato.'),
                         ft.Text('1. Chiudi SIPA e tutti gli altri processi.\n2. Conserva sipa.db e .sipa_audit_key fuori dalla cartella.\n3. Esegui:',size=12),
                         ft.Text('python cli.py restore '+repr(path)+' --confirm "RIPRISTINA SIPA"',selectable=True,size=12),
-                        ft.Text('4. Esegui python cli.py upgrade-db, quindi riavvia SIPA.',size=12),
+                        ft.Text('4. Se la revisione è precedente, esegui python cli.py upgrade-db --backup-dir ~/BackupSIPA, poi verifica con db-version e riavvia SIPA.',size=12),
                     ],scroll=ft.ScrollMode.AUTO,height=470,width=690),
                     actions=[ft.TextButton('Chiudi anteprima',on_click=lambda e:page.pop_dialog())])
                 page.show_dialog(dlg)
@@ -530,6 +545,9 @@ def main(page: ft.Page):
             envname = ft.TextField(label='Variabile ambiente della password', value=c.get('password_env', 'SIPA_PG_PASSWORD'))
             ssl = ft.Dropdown(label='Sicurezza TLS', value=c.get('sslmode', 'require'), options=[ft.dropdown.Option(x) for x in ('require', 'verify-ca', 'verify-full')])
             info = ft.Text('La password non viene salvata: impostare la variabile ambiente prima di avviare SIPA.', size=12)
+            admin_user = ft.TextField(label='Amministratore del database di destinazione')
+            admin_password = ft.TextField(label='Password amministratore del database di destinazione', password=True, can_reveal_password=True)
+            audit_source = ft.TextField(label='Percorso chiave audit originale (se diversa da quella locale)', width=550)
             msg = ft.Text(color=ft.Colors.RED_700)
             fields = ft.Column(spacing=8, tight=True)
             def refresh_fields(e=None):
@@ -540,17 +558,19 @@ def main(page: ft.Page):
             kind.on_change = refresh_fields
             def save(e):
                 try:
-                    save_settings({'driver': c['driver'], 'sqlite_path': path.value, 'host': host.value,
+                    from db_management import connect_existing
+                    result = connect_existing({'driver': c['driver'], 'sqlite_path': path.value, 'host': host.value,
                                    'port': port.value, 'database': dbname.value, 'username': dbuser.value,
-                                   'password_env': envname.value, 'sslmode': ssl.value})
+                                   'password_env': envname.value, 'sslmode': ssl.value},
+                                   admin_user.value or '', admin_password.value or '', audit_source.value or None)
                     page.pop_dialog()
-                    notify('Connessione verificata e configurazione salvata. Riavviare SIPA per applicarla.')
+                    notify('Collegamento verificato (revisione '+str(result['revision'])+'). Configurazione salvata. Riavviare SIPA.')
                 except Exception as exc:
                     msg.value = str(exc)
                     page.update()
             dlg = ft.AlertDialog(modal=True, title=ft.Text('Configurazione database'),
-                content=ft.Column([kind, fields, msg,
-                    ft.Text('Il motore è bloccato. La nuova connessione viene verificata prima del salvataggio; riavviare SIPA per applicarla.', size=12)],
+                content=ft.Column([kind, fields,admin_user,admin_password,audit_source,msg,
+                    ft.Text('Verifica obbligatoria: connessione, tabelle, colonne, revisione ESATTA, utenti, credenziali e catena audit. Il database di destinazione non viene alterato. Si salva solo la configurazione locale; riavviare SIPA.', size=12)],
                     width=580, tight=True, scroll=ft.ScrollMode.AUTO),
                 actions=[ft.TextButton('Annulla', on_click=lambda e: page.pop_dialog()),
                          ft.Button('Salva configurazione', on_click=save)])
@@ -558,31 +578,27 @@ def main(page: ft.Page):
             page.show_dialog(dlg)
 
         def upgrade_dialog(e=None):
-            from schema import revision, HEAD
             current = revision()
-            directory = ft.TextField(label='Cartella backup preventivo', value=str(Path.home() / 'BackupSIPA'), width=490)
-            confirm = ft.Checkbox(label='Confermo che tutti gli altri client SIPA sono chiusi')
-            msg = ft.Text(color=ft.Colors.RED_700)
-            def apply(e):
-                if not confirm.value:
-                    msg.value = 'Confermare la chiusura degli altri client.'
-                    page.update()
-                    return
-                try:
-                    result = maintenance_upgrade(directory.value)
-                    page.pop_dialog()
-                    notify('Revisione: ' + str(result['after']) + '. Backup: ' + str(result['backup']))
-                except Exception as exc:
-                    msg.value = str(exc)
-                    page.update()
-            dlg = ft.AlertDialog(modal=True, title=ft.Text('Aggiornamento schema database'),
-                content=ft.Column([
-                    ft.Text(f'Revisione attuale: {current or "non versionato"}'),
-                    ft.Text(f'Revisione richiesta: {HEAD}'),
-                    ft.Text('Prima delle migrazioni verrà creato e verificato un backup. Operazione da eseguire senza altri client collegati.'),
-                    directory, confirm, msg], tight=True, width=530),
-                actions=[ft.TextButton('Annulla', on_click=lambda e: page.pop_dialog()),
-                         ft.Button('Verifica e aggiorna', on_click=apply)])
+            message = (f'Revisione database: {current or "non versionato"}\n'
+                       f'Revisione richiesta: {HEAD}\n\n'
+                       'Aggiornamento consentito SOLO con SIPA e tutti i client chiusi.\n'
+                       '1. Salvare una copia di sicurezza delle impostazioni.\n'
+                       '2. Aprire il terminale sulla postazione amministrativa.\n'
+                       '3. Eseguire: python cli.py upgrade-db --backup-dir ~/BackupSIPA\n'
+                       '4. Verificare: python cli.py db-version\n'
+                       '5. Riavviare SIPA.\n\n'
+                       'Il comando crea e verifica il backup PRIMA della migrazione.\n'
+                       'Se il database è già alla revisione corretta, non apporta modifiche.')
+            dlg = ft.AlertDialog(modal=True, title=ft.Text('Aggiornamento schema — procedura offline'),
+                content=ft.Column([ft.Text(message, selectable=True)], width=650, height=330,scroll=ft.ScrollMode.AUTO),
+                actions=[ft.TextButton('Chiudi', on_click=lambda e: page.pop_dialog())])
+            page.show_dialog(dlg)
+
+        def database_help(e=None):
+            dlg=ft.AlertDialog(modal=True,title=ft.Text('Guida alle operazioni sul database'),
+                content=ft.Column([ft.Text(DB_ADMIN_GUIDE,selectable=True,size=12)],
+                   width=800,height=520,scroll=ft.ScrollMode.AUTO),
+                actions=[ft.TextButton('Chiudi guida',on_click=lambda e:page.pop_dialog())])
             page.show_dialog(dlg)
 
         if has_permission(user['id'],'backup.manage'):
@@ -596,7 +612,8 @@ def main(page: ft.Page):
                     ft.Button('Genera backup',icon=ft.Icons.BACKUP,on_click=backup_dialog),
                     ft.OutlinedButton('Ripristina da file / confronta schema',icon=ft.Icons.RESTORE,on_click=restore_picker),
                 ],wrap=True),
-                ft.Text('Il ripristino è intenzionalmente offline: il confronto non altera il database.',size=12,color=ft.Colors.GREY_700)
+                ft.Text('Ripristino e migrazioni SOLO da terminale con tutti i client chiusi. I controlli e i backup sono consentiti nel programma.',size=12,color=ft.Colors.GREY_700),
+                ft.OutlinedButton('Guida operazioni database',icon=ft.Icons.HELP_OUTLINE,on_click=database_help)
             ])
 
         content.controls.extend([
