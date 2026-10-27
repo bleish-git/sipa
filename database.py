@@ -35,6 +35,9 @@ class AttivitaEconomica(Base):
     note: Mapped[str] = mapped_column(Text, default='', nullable=False)
     data_inizio: Mapped[date | None] = mapped_column(Date, nullable=True)
     data_cessazione: Mapped[date | None] = mapped_column(Date, nullable=True)
+    data_sospensione_inizio: Mapped[date | None] = mapped_column(Date, nullable=True)
+    data_sospensione_fine: Mapped[date | None] = mapped_column(Date, nullable=True)
+    tipologia: Mapped[str] = mapped_column(String(80), nullable=False, default='Non specificata')
 
 class AuditEvent(Base):
     __tablename__ = 'audit_events'

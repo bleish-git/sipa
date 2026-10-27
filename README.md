@@ -1,6 +1,6 @@
 # SIPA — Sistema Informativo Polizia Amministrativa
 
-**Versione 0.55** · Applicazione desktop in Python per la gestione delle attività di polizia amministrativa.
+**Versione 0.56** · Applicazione desktop in Python per la gestione delle attività di polizia amministrativa.
 
 [Repository GitHub — bleish-git/sipa](https://github.com/bleish-git/sipa) · **Licenza MIT**
 
@@ -13,7 +13,7 @@ SIPA offre un'interfaccia grafica realizzata con **Flet**, utilizza **SQLAlchemy
 - **Autenticazione e utenti:** accesso e disconnessione, password protette con PBKDF2 e salt, creazione e gestione degli utenti, disattivazione e riattivazione, reimpostazione password e cambio obbligatorio dopo il reset.
 - **Ruoli e autorizzazioni:** quattro ruoli (`admin`, `responsabile`, `operatore`, `consultazione`), permessi granulari e matrice dei permessi modificabile dall'amministratore.
 - **Protezione degli accessi:** limitazione dei tentativi ripetuti di autenticazione.
-- **Registro attività economiche:** inserimento, elenco, modifica e consultazione; campi nome, titolare, PEC, descrizione, note, data d'inizio e cessazione. Nome attività normalizzato in maiuscolo; ricerca automatica da tre caratteri su nome, titolare, descrizione e note; filtro per stato calcolato dalle date (**Da iniziare**, **Attiva**, **Cessata**).
+- **Registro attività economiche:** inserimento, elenco, modifica e consultazione; campi nome, titolare, PEC, descrizione, note, data d'inizio e cessazione. Nome attività normalizzato in maiuscolo; ricerca automatica OR su più termini, anche parziali, in nome, titolare, descrizione e note; filtro per stato calcolato dalle date (**Da iniziare**, **Attiva**, **Sospesa**, **Cessata**); esportazione in PDF dell’elenco filtrato nella cartella `~/SIPA_Stampe`.
 - **Audit:** registrazione di accessi e operazioni amministrative, con catena HMAC-SHA256 e chiave separata; verifica da terminale.
 - **Amministrazione database:** configurazione SQLite/PostgreSQL, controllo della revisione Alembic e aggiornamento esplicito dello schema con backup preventivo.
 - **Backup SQLite e PostgreSQL:** copia coerente tramite API SQLite, controllo d'integrità, impronta SHA256, manifest JSON e copia della chiave audit quando presente.
@@ -41,7 +41,7 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-Per le sessioni successive è sufficiente riattivare l'ambiente con `source .venv/bin/activate`.
+Per produrre le stampe PDF è necessaria anche la dipendenza `reportlab`, installata da `requirements.txt`. Per le sessioni successive è sufficiente riattivare l'ambiente con `source .venv/bin/activate`.
 
 ### 2. Prima configurazione grafica o da terminale
 
@@ -82,7 +82,7 @@ Eseguire i comandi dalla directory SIPA, con l'ambiente virtuale attivo e, per l
 
 ### Aggiornamenti dello schema con Alembic
 
-La revisione attualmente prevista dal programma è **`0002_attivita_economiche`**. I file delle migrazioni sono conservati in `migrations/versions/` e **devono accompagnare il codice** nelle installazioni e negli aggiornamenti.
+La revisione attualmente prevista dal programma è **`0003_sospensione_tipologia`**. I file delle migrazioni sono conservati in `migrations/versions/` e **devono accompagnare il codice** nelle installazioni e negli aggiornamenti.
 
 ```bash
 python cli.py db-version
@@ -179,3 +179,18 @@ Il **cambio di destinazione** non trasferisce i dati: ad esempio collegare un Po
 **Nota sulla portabilità:** `pg_dump --format=plain --column-inserts` esporta SQL testuale con nomi di colonne espliciti, ma può contenere comandi e tipi specifici di PostgreSQL. Non è garantita la compatibilità con SQLite o altri DBMS.
 
 **Protezione copie:** database, export SQL, manifest e chiavi di audit possono contenere dati sensibili. Conservare backup e cartelle di storico delle configurazioni in un percorso protetto, accessibile solo agli amministratori. Effettuare periodicamente prove di ripristino su un ambiente isolato.
+
+## Aggiornamento da SIPA 0.55 a SIPA 0.56
+
+La revisione Alembic cambia da `0002_attivita_economiche` a `0003_sospensione_tipologia`. Dopo aver installato i file della patch, **prima di avviare SIPA** chiudere tutti i client e lanciare:
+
+```bash
+python -m pip install -r requirements.txt
+python cli.py upgrade-db --backup-dir ~/BackupSIPA
+python cli.py db-version
+python main.py
+```
+
+L'aggiornamento esegue un backup preventivo e aggiunge le colonne senza cancellare le registrazioni già presenti. Se più postazioni condividono PostgreSQL, applicare la migrazione **una sola volta** dal PC amministrativo. Le tipologie disponibili nella v0.56 sono: Non specificata, Commercio, Somministrazione, Artigianato, Servizi, Altro.
+
+L'intervallo di sospensione è **inclusivo** (la data di fine è ancora sospesa); se la fine è vuota la sospensione rimane attiva. Lo stato Cessata prevale su Sospesa, e Da iniziare prevale su Sospesa. La ricerca combina le parole separate da spazi con OR: `srl oloc` restituisce le attività che contengono `srl` **oppure** `oloc` in uno dei campi ricercabili. La stampa PDF riproduce i filtri e le righe visualizzate (non comprende PEC, descrizione o note).

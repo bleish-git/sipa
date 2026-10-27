@@ -51,7 +51,7 @@ def backup_sql(destination, *, require_current=True):
         if result.returncode or not sql.exists() or sql.stat().st_size == 0:
             raise RuntimeError('Esportazione PostgreSQL fallita: ' + result.stderr[-500:])
         os.chmod(sql, 0o600)
-        manifest = {'application':'SIPA','application_version':'0.55','format':3,
+        manifest = {'application':'SIPA','application_version':'0.56','format':3,
                     'engine':'postgresql','schema_revision':revision(),
                     'database':sql.name,'sha256':_sha(sql),
                     'created_at':datetime.now(timezone.utc).isoformat(),

@@ -115,7 +115,7 @@ def main(page: ft.Page):
                 ft.Text('Sistema Informativo Polizia Amministrativa', size=15, text_align=ft.TextAlign.CENTER),
                 ft.Divider(), username, password, error,
                 ft.Button('Accedi', icon=ft.Icons.LOGIN, width=350, on_click=submit),
-                ft.Row([ft.Text('© 2026', size=12, color=ft.Colors.GREY_600), ft.TextButton('bleish', url='https://github.com/bleish-git/sipa'), ft.Text('• SIPA v0.55 • Licenza MIT', size=12, color=ft.Colors.GREY_600)], spacing=3, alignment=ft.MainAxisAlignment.CENTER),
+                ft.Row([ft.Text('© 2026', size=12, color=ft.Colors.GREY_600), ft.TextButton('bleish', url='https://github.com/bleish-git/sipa'), ft.Text('• SIPA v0.56 • Licenza MIT', size=12, color=ft.Colors.GREY_600)], spacing=3, alignment=ft.MainAxisAlignment.CENTER),
             ], tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15))
         page.add(ft.Container(content=card, alignment=ft.Alignment.CENTER, expand=True, bgcolor=ft.Colors.BLUE_GREY_50))
         page.update()
@@ -198,35 +198,40 @@ def main(page: ft.Page):
         page.update()
 
     def render_attivita(content):
-        from attivita import elenco, dettaglio, salva
+        from attivita import elenco, dettaglio, salva, TIPOLOGIE
         can_create = has_permission(user['id'], 'attivita.create')
         can_update = has_permission(user['id'], 'attivita.update')
         search = ft.TextField(
-            label='Cerca in nome, titolare, descrizione e note (min. 3 caratteri)',
+            label='Ricerca OR per termini: nome, titolare, descrizione, note (min. 3 caratteri)',
             width=450, prefix_icon=ft.Icons.SEARCH,
         )
         status = ft.Dropdown(label='Stato', value='Tutte', width=180,
-            options=[ft.dropdown.Option(v) for v in ('Tutte', 'Attiva', 'Da iniziare', 'Cessata')])
+            options=[ft.dropdown.Option(v) for v in ('Tutte', 'Attiva', 'Da iniziare', 'Sospesa', 'Cessata')])
         results = ft.Column(spacing=4)
         counter = ft.Text(size=12, color=ft.Colors.GREY_700)
+        displayed_records = []
 
         def refresh(e=None, initial=False):
+            nonlocal displayed_records
             term = (search.value or '').strip()
             if term and len(term) < 3:
                 results.controls = []
+                displayed_records = []
                 counter.value = 'Inserisci almeno 3 caratteri per avviare la ricerca.'
                 if not initial:
                     page.update()
                 return
             try:
                 data = elenco(user['id'], term, status.value or 'Tutte')
+                displayed_records = data
                 counter.value = f'{len(data)} attività trovate'
                 results.controls = []
                 for item in data:
                     label = ft.Text(item['nome'], weight=ft.FontWeight.BOLD, expand=True)
                     subtitle = ft.Text(item['titolare'] or 'Titolare non indicato', size=12, color=ft.Colors.GREY_700)
                     color = (ft.Colors.GREEN_700 if item['stato'] == 'Attiva' else
-                             ft.Colors.ORANGE_700 if item['stato'] == 'Da iniziare' else ft.Colors.RED_700)
+                             ft.Colors.ORANGE_700 if item['stato'] == 'Da iniziare' else
+                             ft.Colors.AMBER_800 if item['stato'] == 'Sospesa' else ft.Colors.RED_700)
                     results.controls.append(ft.Container(
                         bgcolor=ft.Colors.BLUE_GREY_50, border_radius=8, padding=12,
                         on_click=lambda e, pk=item['id']: open_detail(pk),
@@ -241,6 +246,7 @@ def main(page: ft.Page):
             except Exception as exc:
                 traceback.print_exc()
                 counter.value = 'Errore caricamento elenco: ' + f'{type(exc).__name__}: {exc}'
+                displayed_records = []
                 results.controls = [ft.Text(counter.value, color=ft.Colors.RED_700, selectable=True)]
             if not initial:
                 page.update()
@@ -265,17 +271,32 @@ def main(page: ft.Page):
                 ('pec', 'PEC', False),
                 ('descrizione', 'Descrizione', True),
                 ('note', 'Note', True),
-                ('data_inizio', 'Data inizio (AAAA-MM-GG)', False),
-                ('data_cessazione', 'Data cessazione (AAAA-MM-GG)', False),
+                ('data_inizio', 'Data inizio (GG/MM/AAAA)', False),
+                ('data_cessazione', 'Data cessazione (GG/MM/AAAA)', False),
+                ('data_sospensione_inizio', 'Inizio sospensione (GG/MM/AAAA)', False),
+                ('data_sospensione_fine', 'Fine sospensione (GG/MM/AAAA)', False),
             ]}
+            fields['tipologia'] = ft.Dropdown(
+                label='Tipologia', value=item.get('tipologia') or 'Non specificata',
+                options=[ft.dropdown.Option(v) for v in TIPOLOGIE], disabled=not editable)
             error = ft.Text(color=ft.Colors.RED_700)
             detail_controls = list(fields.values())
             if item_id is not None:
-                detail_controls.insert(0, ft.Text('Stato attuale: ' + item['stato'], weight=ft.FontWeight.BOLD))
+                stato_colori = {
+                    'Attiva': ft.Colors.GREEN_700,
+                    'Da iniziare': ft.Colors.ORANGE_700,
+                    'Sospesa': ft.Colors.AMBER_800,
+                    'Cessata': ft.Colors.RED_700,
+                }
+                detail_controls.insert(0, ft.Text(
+                    'Stato attuale: ' + item['stato'],
+                    weight=ft.FontWeight.BOLD,
+                    color=stato_colori.get(item['stato'], ft.Colors.GREY_700),
+                ))
             detail_controls.append(error)
             dlg = ft.AlertDialog(modal=True,
                 title=ft.Text('Nuova attività economica' if item_id is None else 'Dettaglio attività economica'),
-                content=ft.Column(detail_controls, tight=True, width=580, height=490,
+                content=ft.Column(detail_controls, tight=True, width=580, height=530,
                                   scroll=ft.ScrollMode.AUTO), actions=[])
             def save(e):
                 try:
@@ -295,10 +316,24 @@ def main(page: ft.Page):
                 dlg.actions.append(ft.Button('Salva', icon=ft.Icons.SAVE, on_click=save))
             page.show_dialog(dlg)
 
+        def stampa_elenco(e):
+            try:
+                if (search.value or '').strip() and len((search.value or '').strip()) < 3:
+                    notify('Per stampare, inserisci almeno 3 caratteri o svuota la ricerca.', True)
+                    return
+                # Query ripetuta per rendere il documento coerente coi filtri attuali.
+                records = elenco(user['id'], search.value or '', status.value or 'Tutte')
+                from stampa_attivita import stampa_pdf
+                path = stampa_pdf(records, search.value or '', status.value or 'Tutte')
+                notify(f'PDF creato: {path}')
+            except Exception as exc:
+                notify('Errore nella creazione del PDF: ' + str(exc), True)
+
         search.on_change = refresh
         status.on_select = refresh
         status.on_change = refresh
-        buttons = [ft.OutlinedButton('Aggiorna', icon=ft.Icons.REFRESH, on_click=refresh)]
+        buttons = [ft.OutlinedButton('Aggiorna', icon=ft.Icons.REFRESH, on_click=refresh),
+                   ft.OutlinedButton('Stampa elenco PDF', icon=ft.Icons.PRINT, on_click=stampa_elenco)]
         if can_create:
             buttons.append(ft.Button('Nuova attività', icon=ft.Icons.ADD, on_click=lambda e: open_detail()))
         content.controls.extend([
