@@ -1,5 +1,5 @@
 """Guida visualizzata nel menu Amministrazione."""
-DB_ADMIN_GUIDE = '''SIPA 0.56 — GUIDA DATABASE E MANUTENZIONE
+DB_ADMIN_GUIDE = '''SIPA 0.57 — GUIDA DATABASE E MANUTENZIONE
 
 REGOLE DI COMPATIBILITÀ
 • Il database collegato deve avere la revisione Alembic esattamente uguale a quella richiesta dall'applicazione. Non sono ammessi DB più vecchi o più nuovi durante l'uso normale.

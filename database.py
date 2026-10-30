@@ -39,6 +39,21 @@ class AttivitaEconomica(Base):
     data_sospensione_fine: Mapped[date | None] = mapped_column(Date, nullable=True)
     tipologia: Mapped[str] = mapped_column(String(80), nullable=False, default='Non specificata')
 
+class MercatinoDitta(Base):
+    __tablename__ = 'mercatino_ditte'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    denominazione: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
+    numero_posto: Mapped[str] = mapped_column(String(30), nullable=False)
+    luogo: Mapped[str] = mapped_column(String(150), nullable=False, index=True)
+    stato: Mapped[str] = mapped_column(String(15), nullable=False, default='Attivo')
+
+class MercatinoAssenza(Base):
+    __tablename__ = 'mercatino_assenze'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ditta_id: Mapped[int] = mapped_column(Integer, ForeignKey('mercatino_ditte.id', ondelete='CASCADE'), nullable=False, index=True)
+    giorno: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    __table_args__ = (UniqueConstraint('ditta_id', 'giorno', name='uq_mercatino_ditta_giorno'),)
+
 class AuditEvent(Base):
     __tablename__ = 'audit_events'
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -68,6 +83,9 @@ class LoginThrottle(Base):
 
 PERMISSIONS = {
     'dashboard.view':'Consultare dashboard',
+    'mercatino.read':'Consultare mercatino', 'mercatino.create':'Inserire ditte mercatino',
+    'mercatino.update':'Modificare ditte mercatino', 'mercatino.absence':'Registrare assenze mercatino',
+    'mercatino.export':'Stampare mercatino',
     'attivita.read':'Consultare attività', 'attivita.create':'Inserire attività',
     'attivita.update':'Modificare attività', 'attivita.void':'Annullare attività',
     'verbali.read':'Consultare verbali', 'verbali.create':'Inserire verbali',
@@ -80,10 +98,10 @@ PERMISSIONS = {
 DEFAULT_ROLES = {
     'admin': set(PERMISSIONS),
     'responsabile': set(PERMISSIONS)-{'users.manage','permissions.manage','backup.manage'},
-    'operatore': {'dashboard.view','attivita.read','attivita.create','attivita.update',
+    'operatore': {'mercatino.read','mercatino.create','mercatino.update','mercatino.absence','mercatino.export','dashboard.view','attivita.read','attivita.create','attivita.update',
                  'verbali.read','verbali.create','verbali.update',
                  'accertamenti.read','accertamenti.create','documenti.read'},
-    'consultazione': {'dashboard.view','attivita.read','verbali.read','accertamenti.read','documenti.read'},
+    'consultazione': {'mercatino.read','mercatino.export','dashboard.view','attivita.read','verbali.read','accertamenti.read','documenti.read'},
 }
 
 def init_database():

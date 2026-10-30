@@ -1,6 +1,6 @@
 # SIPA — Sistema Informativo Polizia Amministrativa
 
-**Versione 0.56** · Applicazione desktop in Python per la gestione delle attività di polizia amministrativa.
+**Versione 0.57** · Applicazione desktop in Python per la gestione delle attività di polizia amministrativa.
 
 [Repository GitHub — bleish-git/sipa](https://github.com/bleish-git/sipa) · **Licenza MIT**
 
@@ -82,7 +82,7 @@ Eseguire i comandi dalla directory SIPA, con l'ambiente virtuale attivo e, per l
 
 ### Aggiornamenti dello schema con Alembic
 
-La revisione attualmente prevista dal programma è **`0003_sospensione_tipologia`**. I file delle migrazioni sono conservati in `migrations/versions/` e **devono accompagnare il codice** nelle installazioni e negli aggiornamenti.
+La revisione attualmente prevista dal programma è **`0004_mercatino`**. I file delle migrazioni sono conservati in `migrations/versions/` e **devono accompagnare il codice** nelle installazioni e negli aggiornamenti.
 
 ```bash
 python cli.py db-version
@@ -194,3 +194,34 @@ python main.py
 L'aggiornamento esegue un backup preventivo e aggiunge le colonne senza cancellare le registrazioni già presenti. Se più postazioni condividono PostgreSQL, applicare la migrazione **una sola volta** dal PC amministrativo. Le tipologie disponibili nella v0.56 sono: Non specificata, Commercio, Somministrazione, Artigianato, Servizi, Altro.
 
 L'intervallo di sospensione è **inclusivo** (la data di fine è ancora sospesa); se la fine è vuota la sospensione rimane attiva. Lo stato Cessata prevale su Sospesa, e Da iniziare prevale su Sospesa. La ricerca combina le parole separate da spazi con OR: `srl oloc` restituisce le attività che contengono `srl` **oppure** `oloc` in uno dei campi ricercabili. La stampa PDF riproduce i filtri e le righe visualizzate (non comprende PEC, descrizione o note).
+
+
+## Aggiornamento a SIPA 0.57 — Mercatino
+
+La revisione Alembic richiesta è **`0004_mercatino`** (precedente: `0003_sospensione_tipologia`).
+Chiudere SIPA su **tutte** le postazioni prima dell'aggiornamento; creare una copia dei file attuali e sostituire solo i file della patch. Poi eseguire:
+
+```bash
+python -m pip install -r requirements.txt
+python cli.py upgrade-db --backup-dir ~/BackupSIPA
+python cli.py db-version
+python main.py
+```
+
+L'aggiornamento dello schema è **esplicito e offline**, con backup preventivo. Non viene cancellata alcuna attività economica esistente.
+
+### Funzionalità Mercatino
+
+- **Dit­te:** denominazione, numero posto, stato *Attivo/Sospeso/Cessato*, luogo mercatino. Inserimento e modifica autorizzati per ruolo.
+- **Ricerca:** denominazione, a partire da **3 caratteri complessivi**; filtro per stato; selezione multipla dei luoghi effettivamente registrati (anche nessun luogo).
+- **Assenze:** nella riga della ditta, *Registra / annulla assenza* permette di indicare un giorno `GG/MM/AAAA`. La stessa ditta può avere al massimo una registrazione per ciascuna data. L'annullamento è tracciato nell'audit.
+- **Stampe:** *Stampa elenco PDF* usa la ricerca e i filtri correnti; *Prospetto annuale complessivo PDF* utilizza l'anno selezionato e le ditte attualmente filtrate. Dalla singola riga si stampa il prospetto annuale della ditta. La matrice mostra **una riga per ditta e una colonna per data con almeno un'assenza registrata**; una `X` identifica un'assenza. Per leggibilità, più di 12 date vengono suddivise in blocchi di colonne, mantenendo la ditta in ogni blocco. I file sono salvati in `~/SIPA_Stampe`.
+- **Ruoli:** autorizzazioni `mercatino.read`, `.create`, `.update`, `.absence`, `.export`. La v0.57 inizializza i permessi predefiniti per i ruoli al primo avvio, dopo la migrazione; possono essere personalizzati in Amministrazione.
+
+### Ricerca Attività economiche
+
+La ricerca OR si attiva quando **l'intera stringa, senza spazi iniziali/finali**, è lunga almeno **3 caratteri**, non quando ogni parola ha almeno tre caratteri. I termini sono separati da spazi, possono essere anche di 1–2 caratteri e vengono cercati in OR nei campi nome, titolare, descrizione e note, senza distinzione fra maiuscole e minuscole. Ad esempio, `a srl` cerca `a` **oppure** `srl`. Una ricerca vuota mostra l'elenco completo.
+
+### Note di sicurezza e funzionamento
+
+Il Mercatino conserva le assenze come date e non come celle fisse del calendario; il prospetto viene generato dai dati registrati nell'anno. Non sono previsti cancellazioni automatiche o modifiche allo schema durante il normale avvio. Le prove delle migrazioni e delle stampe vanno ripetute sul sistema operativo di destinazione prima dell'utilizzo su dati operativi.

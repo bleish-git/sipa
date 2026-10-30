@@ -8,7 +8,7 @@ depends_on = None
 
 def upgrade():
     bind = op.get_bind()
-    Base.metadata.create_all(bind=bind, tables=[table for table in Base.metadata.sorted_tables if table.name != 'attivita_economiche'], checkfirst=True)
+    Base.metadata.create_all(bind=bind, tables=[table for table in Base.metadata.sorted_tables if table.name not in {'attivita_economiche', 'mercatino_ditte', 'mercatino_assenze'}], checkfirst=True)
 
 def downgrade():
     raise RuntimeError("Downgrade distruttivo non supportato; ripristinare un backup.")

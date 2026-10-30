@@ -30,6 +30,7 @@ ASSETS = Path(__file__).resolve().parent / 'assets'
 SECTIONS = [
     ('Dashboard', ft.Icons.DASHBOARD_OUTLINED),
     ('Attività economiche', ft.Icons.STOREFRONT_OUTLINED),
+    ('Mercatino', ft.Icons.STORE_OUTLINED),
     ('Sanzioni amministrative', ft.Icons.DESCRIPTION_OUTLINED),
     ('Accertamenti', ft.Icons.FACT_CHECK_OUTLINED),
     ('Archivio documentale', ft.Icons.FOLDER_OUTLINED),
@@ -115,7 +116,7 @@ def main(page: ft.Page):
                 ft.Text('Sistema Informativo Polizia Amministrativa', size=15, text_align=ft.TextAlign.CENTER),
                 ft.Divider(), username, password, error,
                 ft.Button('Accedi', icon=ft.Icons.LOGIN, width=350, on_click=submit),
-                ft.Row([ft.Text('© 2026', size=12, color=ft.Colors.GREY_600), ft.TextButton('bleish', url='https://github.com/bleish-git/sipa'), ft.Text('• SIPA v0.56 • Licenza MIT', size=12, color=ft.Colors.GREY_600)], spacing=3, alignment=ft.MainAxisAlignment.CENTER),
+                ft.Row([ft.Text('© 2026', size=12, color=ft.Colors.GREY_600), ft.TextButton('bleish', url='https://github.com/bleish-git/sipa'), ft.Text('• SIPA v0.57 • Licenza MIT', size=12, color=ft.Colors.GREY_600)], spacing=3, alignment=ft.MainAxisAlignment.CENTER),
             ], tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15))
         page.add(ft.Container(content=card, alignment=ft.Alignment.CENTER, expand=True, bgcolor=ft.Colors.BLUE_GREY_50))
         page.update()
@@ -123,7 +124,7 @@ def main(page: ft.Page):
     def dashboard():
         nonlocal selected_section
         page.clean()
-        if selected_section == 5 and not has_permission(user['id'], 'users.manage'):
+        if selected_section == 6 and not has_permission(user['id'], 'users.manage'):
             selected_section = 0
         content = ft.Column(expand=True, scroll=ft.ScrollMode.AUTO, spacing=15)
         navigation = ft.Column(spacing=5)
@@ -133,9 +134,9 @@ def main(page: ft.Page):
             if user['must_change_password']:
                 password_dialog(force=True)
                 return
-            if index == 5 and not has_permission(user['id'], 'users.manage'):
+            if index == 6 and not has_permission(user['id'], 'users.manage'):
                 return
-            needed = {0:'dashboard.view',1:'attivita.read',2:'verbali.read',3:'accertamenti.read',4:'documenti.read',5:'users.manage'}[index]
+            needed = {0:'dashboard.view',1:'attivita.read',2:'mercatino.read',3:'verbali.read',4:'accertamenti.read',5:'documenti.read',6:'users.manage'}[index]
             if not has_permission(user['id'], needed):
                 notify('Accesso non autorizzato a questo settore.', True)
                 return
@@ -147,7 +148,7 @@ def main(page: ft.Page):
         def render_navigation():
             navigation.controls.clear()
             for i, (label, icon) in enumerate(SECTIONS):
-                required = {0:'dashboard.view',1:'attivita.read',2:'verbali.read',3:'accertamenti.read',4:'documenti.read',5:'users.manage'}[i]
+                required = {0:'dashboard.view',1:'attivita.read',2:'mercatino.read',3:'verbali.read',4:'accertamenti.read',5:'documenti.read',6:'users.manage'}[i]
                 if not has_permission(user['id'], required):
                     continue
                 navigation.controls.append(ft.Button(label, icon=icon, width=244,
@@ -163,8 +164,14 @@ def main(page: ft.Page):
                 ft.Row([ft.Text('© 2026', color=ft.Colors.GREY_700), ft.TextButton('bleish', url='https://github.com/bleish-git/sipa'), ft.Text('• Licenza MIT • github.com/bleish-git/sipa', color=ft.Colors.GREY_700)], spacing=3),
                 ft.Divider(),
             ])
-            if selected_section == 5:
+            if selected_section == 6:
                 render_admin(content)
+            elif selected_section == 2:
+                try:
+                    render_mercatino(content)
+                except Exception as exc:
+                    traceback.print_exc()
+                    content.controls.append(ft.Text(f'Errore Mercatino: {type(exc).__name__}: {exc}', color=ft.Colors.RED_700, selectable=True))
             elif selected_section == 1:
                 try:
                     render_attivita(content)
@@ -202,7 +209,7 @@ def main(page: ft.Page):
         can_create = has_permission(user['id'], 'attivita.create')
         can_update = has_permission(user['id'], 'attivita.update')
         search = ft.TextField(
-            label='Ricerca OR per termini: nome, titolare, descrizione, note (min. 3 caratteri)',
+            label='Ricerca OR (almeno 3 caratteri complessivi; termini di qualsiasi lunghezza)',
             width=450, prefix_icon=ft.Icons.SEARCH,
         )
         status = ft.Dropdown(label='Stato', value='Tutte', width=180,
@@ -343,6 +350,201 @@ def main(page: ft.Page):
         ])
         # Carica i dati dopo aver montato i controlli nella pagina.
         # Evita errori silenziosi durante la costruzione della schermata.
+        refresh(initial=True)
+
+    def render_mercatino(content):
+        from datetime import date
+        from mercatino import (elenco as elenco_m, luoghi as luoghi_m, dettaglio as dettaglio_m,
+                               salva as salva_m, assenze as assenze_m, segna_assenza, matrice,
+                               assenze_per_giorno, data_input, STATI)
+        from stampa_mercatino import (stampa_elenco as pdf_elenco, stampa_assenze as pdf_assenze,
+                                    stampa_assenze_giorno as pdf_giorno)
+        can_create = has_permission(user['id'], 'mercatino.create')
+        can_update = has_permission(user['id'], 'mercatino.update')
+        can_absence = has_permission(user['id'], 'mercatino.absence')
+        can_export = has_permission(user['id'], 'mercatino.export')
+        cerca = ft.TextField(label='Ricerca denominazione (min. 3 caratteri)', width=380,
+                             prefix_icon=ft.Icons.SEARCH)
+        filtro_stato = ft.Dropdown(label='Stato', value='Tutti', width=160,
+                         options=[ft.dropdown.Option(x) for x in ('Tutti',)+STATI])
+        locations = luoghi_m(user['id'])
+        selected_locations = set(locations)
+        location_chips = ft.Text('Luoghi: tutti' if locations else 'Nessun luogo registrato', size=12)
+        risultati = ft.Column(spacing=4)
+        totale = ft.Text(size=12, color=ft.Colors.GREY_700)
+        anno = ft.TextField(label='Anno prospetti', width=120, value=str(date.today().year))
+        shown = []
+        def current_filter():
+            return None if selected_locations == set(locations) else set(selected_locations)
+        def refresh(e=None, initial=False):
+            nonlocal shown, locations
+            q=(cerca.value or '').strip()
+            if q and len(q)<3:
+                shown=[]; risultati.controls=[]
+                totale.value='Inserisci almeno 3 caratteri complessivi per cercare.'
+                if not initial: page.update()
+                return
+            shown=elenco_m(user['id'],q,current_filter(),filtro_stato.value or 'Tutti')
+            totale.value=f'{len(shown)} ditte trovate'
+            risultati.controls=[]
+            for d in shown:
+                color={'Attivo':ft.Colors.GREEN_700,'Sospeso':ft.Colors.AMBER_800,
+                       'Cessato':ft.Colors.RED_700}[d['stato']]
+                buttons=[]
+                if can_absence and d['stato'] == 'Attivo':
+                    buttons.append(ft.IconButton(ft.Icons.EVENT_BUSY,tooltip='Registra / annulla assenza',
+                               on_click=lambda e, pk=d['id']: open_absence(pk)))
+                buttons.append(ft.IconButton(ft.Icons.EVENT_NOTE,tooltip='Prospetto assenze della ditta',
+                               on_click=lambda e, pk=d['id']: print_annual(pk)))
+                risultati.controls.append(ft.Container(bgcolor=ft.Colors.BLUE_GREY_50, border_radius=8,padding=10,
+                   content=ft.Row([
+                     ft.Column([ft.Text(d['denominazione'],weight=ft.FontWeight.BOLD),
+                       ft.Text(f"Posto {d['numero_posto']} • {d['luogo']}",size=12)],expand=True,spacing=2),
+                     ft.Text(d['stato'],color=color,width=85),
+                     ft.IconButton(ft.Icons.EDIT_OUTLINED,tooltip='Apri scheda',
+                                   on_click=lambda e,pk=d['id']: open_detail(pk)),*buttons])))
+            if not shown:
+                risultati.controls=[ft.Text('Nessuna ditta corrispondente ai filtri.')]
+            if not initial: page.update()
+        def select_locations(e=None):
+            checks={x:ft.Checkbox(label=x,value=x in selected_locations) for x in locations}
+            dlg=ft.AlertDialog(modal=True,title=ft.Text('Seleziona luoghi mercatino'),
+                content=ft.Column(list(checks.values()) or [ft.Text('Nessun luogo disponibile')],
+                   width=370,height=300,scroll=ft.ScrollMode.AUTO),actions=[])
+            def apply(ev):
+                selected_locations.clear()
+                selected_locations.update(x for x,c in checks.items() if c.value)
+                location_chips.value=('Luoghi: tutti' if selected_locations==set(locations) else
+                                      'Luoghi: '+(', '.join(sorted(selected_locations)) or 'nessuno'))
+                page.pop_dialog();refresh()
+            dlg.actions=[ft.TextButton('Annulla',on_click=lambda ev:page.pop_dialog()),
+                         ft.Button('Applica',on_click=apply)]
+            page.show_dialog(dlg)
+        def open_detail(pk=None):
+            if pk is None and not can_create:
+                notify('Inserimento non autorizzato',True);return
+            d=dettaglio_m(user['id'],pk) if pk is not None else {}
+            editable=can_update if pk is not None else can_create
+            values={k:ft.TextField(label=label,value=d.get(k,'') or '',read_only=not editable)
+                    for k,label in [('denominazione','Denominazione *'),('numero_posto','Numero posto *'),
+                                    ('luogo','Luogo mercatino *')]}
+            values['stato']=ft.Dropdown(label='Stato',value=d.get('stato','Attivo'),
+                options=[ft.dropdown.Option(x) for x in STATI],disabled=not editable)
+            error=ft.Text(color=ft.Colors.RED_700)
+            dlg=ft.AlertDialog(modal=True,title=ft.Text('Nuova ditta mercatino' if pk is None else 'Scheda ditta mercatino'),
+                content=ft.Column([*values.values(),error],tight=True,width=470),actions=[])
+            def save(ev):
+                try:
+                    salva_m(user['id'],user['username'],{k:v.value for k,v in values.items()},pk)
+                    page.pop_dialog()
+                    locations[:]=luoghi_m(user['id'])
+                    selected_locations.update(locations)
+                    refresh();notify('Ditta salvata')
+                except Exception as exc:
+                    error.value=str(exc);page.update()
+            dlg.actions=[ft.TextButton('Chiudi',on_click=lambda ev:page.pop_dialog())]
+            if editable:dlg.actions.append(ft.Button('Salva',on_click=save))
+            page.show_dialog(dlg)
+        def open_absence(pk):
+            d=dettaglio_m(user['id'],pk)
+            if d['stato'] != 'Attivo':
+                notify('È possibile registrare assenze soltanto per ditte attive.', True)
+                return
+            input_day=ft.TextField(label='Giorno (GG/MM/AAAA)',value=date.today().strftime('%d/%m/%Y'))
+            present=ft.Text(size=12)
+            error=ft.Text(color=ft.Colors.RED_700)
+            dlg=ft.AlertDialog(modal=True,title=ft.Text('Assenza — '+d['denominazione']),
+                content=ft.Column([input_day,present,error],tight=True,width=400),actions=[])
+            def check():
+                from mercatino import data_input
+                current=data_input(input_day.value)
+                present.value=('Assenza già registrata' if current in assenze_m(user['id'],pk,current.year)
+                               else 'Nessuna assenza registrata per la data')
+            def apply(ev, absent):
+                try:
+                    changed=segna_assenza(user['id'],user['username'],pk,input_day.value,absent)
+                    page.pop_dialog();notify('Registro assenze aggiornato' if changed else 'Nessuna modifica necessaria')
+                except Exception as exc:
+                    error.value=str(exc);page.update()
+            def check_day(ev):
+                if len(input_day.value or '') != 10:
+                    present.value = ''
+                else:
+                    try: check()
+                    except ValueError: present.value = 'Data non valida'
+                page.update()
+            input_day.on_change = check_day
+            try:check()
+            except ValueError:pass
+            dlg.actions=[ft.TextButton('Chiudi',on_click=lambda ev:page.pop_dialog()),
+                         ft.OutlinedButton('Annulla assenza',on_click=lambda ev:apply(ev,False)),
+                         ft.Button('Segna assente',on_click=lambda ev:apply(ev,True))]
+            page.show_dialog(dlg)
+        def print_list(ev):
+            if not can_export:notify('Stampa non autorizzata',True);return
+            try:
+                q=(cerca.value or '').strip()
+                if q and len(q)<3:raise ValueError('La ricerca deve avere almeno 3 caratteri')
+                rows=elenco_m(user['id'],q,current_filter(),filtro_stato.value or 'Tutti')
+                path=pdf_elenco(rows,q,current_filter(),filtro_stato.value or 'Tutti')
+                notify('PDF creato: '+str(path))
+            except Exception as exc:notify('Stampa non riuscita: '+str(exc),True)
+        def print_annual(pk=None):
+            if not can_export:notify('Stampa non autorizzata',True);return
+            try:
+                q=(cerca.value or '').strip()
+                if q and len(q)<3:raise ValueError('La ricerca deve avere almeno 3 caratteri')
+                if pk is None:
+                    # Il prospetto generale include sempre tutte le ditte attive
+                    # che corrispondono ai filtri di denominazione e luogo.
+                    d, dates, entries=matrice(user['id'],int(anno.value),q,current_filter(),
+                                               'Attivo',None)
+                else:
+                    # La certificazione individuale non dipende dai filtri dell'elenco.
+                    d, dates, entries=matrice(user['id'],int(anno.value),
+                                               '',None,'Tutti',pk)
+                path=pdf_assenze(d,dates,entries,int(anno.value),pk is not None)
+                notify('PDF creato: '+str(path))
+            except Exception as exc:notify('Stampa prospetto non riuscita: '+str(exc),True)
+        def print_day_dialog(ev):
+            if not can_export:
+                notify('Stampa non autorizzata', True)
+                return
+            selected_day = ft.TextField(label='Data di rilevazione (GG/MM/AAAA)',
+                                        value=date.today().strftime('%d/%m/%Y'), width=250)
+            error = ft.Text(color=ft.Colors.RED_700)
+            dlg = ft.AlertDialog(modal=True, title=ft.Text('Attestazione assenze per data'),
+                                 content=ft.Column([selected_day, error], tight=True, width=340), actions=[])
+            def generate(event):
+                try:
+                    day = data_input(selected_day.value)
+                    records = assenze_per_giorno(user['id'], day)
+                    path = pdf_giorno(records, day)
+                    page.pop_dialog()
+                    notify('PDF creato: ' + str(path))
+                except Exception as exc:
+                    error.value = str(exc)
+                    page.update()
+            dlg.actions = [ft.TextButton('Annulla', on_click=lambda event: page.pop_dialog()),
+                           ft.Button('Stampa PDF', icon=ft.Icons.PRINT, on_click=generate)]
+            page.show_dialog(dlg)
+
+        cerca.on_change=refresh
+        filtro_stato.on_change=refresh
+        filtro_stato.on_select=refresh
+        tools=[ft.OutlinedButton('Aggiorna',icon=ft.Icons.REFRESH,on_click=refresh)]
+        if can_create:tools.append(ft.Button('Nuova ditta',icon=ft.Icons.ADD,on_click=lambda ev:open_detail()))
+        if can_export:
+            tools.extend([ft.OutlinedButton('Stampa elenco PDF',icon=ft.Icons.PRINT,on_click=print_list),
+                          ft.OutlinedButton('Prospetto annuale complessivo PDF',icon=ft.Icons.EVENT_NOTE,
+                                            on_click=lambda ev:print_annual()),
+                          ft.OutlinedButton('Attestazione assenze per data PDF',icon=ft.Icons.PRINT,
+                                            on_click=print_day_dialog)])
+        content.controls.extend([ft.Text('Registro ditte del mercatino',size=17,weight=ft.FontWeight.W_600),
+           ft.Row([cerca,filtro_stato],wrap=True,spacing=12),
+           ft.Row([ft.OutlinedButton('Luoghi (scelta multipla)',icon=ft.Icons.FILTER_ALT,
+                                       on_click=select_locations),location_chips],wrap=True),
+           ft.Row([anno],wrap=True),ft.Row(tools,wrap=True),totale,risultati])
         refresh(initial=True)
 
     def render_admin(content):

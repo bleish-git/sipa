@@ -1,4 +1,4 @@
-"""First-run graphical and CLI setup for SIPA 0.56.
+"""First-run graphical and CLI setup for SIPA 0.57.
 
 An existing database is only inspected, never migrated, stamped or seeded.
 """
@@ -194,7 +194,7 @@ def setup(values, mode, username, password, audit_key_path=None):
 def cli_setup():
     if CONFIG.exists():
         raise SystemExit('Configurazione già presente: --init-admin è riservato alla prima installazione.')
-    print('SIPA 0.56 — configurazione iniziale senza interfaccia grafica')
+    print('SIPA 0.57 — configurazione iniziale senza interfaccia grafica')
     mode = input('Operazione: [1] Crea nuovo / [2] Collega esistente: ').strip()
     if mode not in ('1', '2'):
         raise SystemExit('Operazione non valida')
@@ -224,7 +224,7 @@ def launch_gui():
     import flet as ft
 
     def wizard(page: ft.Page):
-        page.title = 'SIPA 0.56 — prima configurazione'
+        page.title = 'SIPA 0.57 — prima configurazione'
         page.window.width = 850
         page.window.height = 760
         page.scroll = ft.ScrollMode.AUTO
@@ -280,7 +280,7 @@ def launch_gui():
         driver.on_change = change
         submit = ft.Button('Verifica e completa configurazione', on_click=proceed)
         page.add(ft.Container(padding=25, content=ft.Column([
-            ft.Text('SIPA 0.56 · Prima configurazione', size=25, weight=ft.FontWeight.BOLD),
+            ft.Text('SIPA 0.57 · Prima configurazione', size=25, weight=ft.FontWeight.BOLD),
             ft.Text('Credenziali amministrative: per un nuovo archivio verrà creato questo utente; '
                     'per un archivio esistente ne verrà verificata la password senza modificarlo.'),
             username, password, confirm, ft.Divider(), ft.Text('Operazione', weight=ft.FontWeight.BOLD), mode,
