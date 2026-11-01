@@ -594,26 +594,43 @@ def main(page: ft.Page):
             gd=dropdown('Luogo e giornata',[(x['id'],x['descrizione']) for x in sessions],
                         preset['giornata_id'] if preset else sessions[0]['id'],440)
             status=ft.Text();checks={};excluded=ft.Column();listbox=ft.Column(spacing=3)
+            ricerca_ditta=ft.TextField(label='Cerca ditta (min. 3 caratteri)',prefix_icon=ft.Icons.SEARCH,width=390)
+            righe_ditte=[];ordine_ditte=[]
+            conteggio_ricerca=ft.Text(size=12,color=ft.Colors.GREY_700)
             notes=textinput('Note rilevazione',width=520)
             reason=textinput('Motivo rettifica (se rilevazione confermata)',width=520)
             current={'ids':set(),'key':None,'state':'Nuova'}
+            def filtra_ditte(ev=None):
+                # La ricerca cambia solo la visualizzazione; le spunte nascoste
+                # continuano a far parte della rilevazione completa.
+                termine=(ricerca_ditta.value or '').strip().casefold()
+                visibili=[c for nome,c in righe_ditte if len(termine)<3 or termine in nome]
+                listbox.controls[:]=visibili
+                conteggio_ricerca.value=(f'{len(visibili)} di {len(righe_ditte)} ditte visualizzate'
+                                       if len(termine)>=3 else f'{len(righe_ditte)} ditte in elenco')
+                if not righe_ditte:
+                    listbox.controls.append(ft.Text('Nessuna ditta tenuta alla presenza in questa giornata.'))
+                elif len(termine)>=3 and not visibili:
+                    listbox.controls.append(ft.Text('Nessuna ditta corrisponde alla ricerca.'))
+                page.update()
             def load(ev=None):
-                checks.clear();listbox.controls.clear();excluded.controls.clear();current['key']=None
+                checks.clear();righe_ditte.clear();listbox.controls.clear();excluded.controls.clear();current['key']=None
                 try:
                     w.value=week(day.value)
                     snapshot=anteprima(uid,day.value,gd.value)
                     current['ids']={d['assegnazione_id'] for d in snapshot['ditte']}
                     current['key']=(data_input(day.value),int(gd.value))
                     current['state']=snapshot['stato']
-                    for d in snapshot['ditte']:
+                    for d in sorted(snapshot['ditte'], key=lambda x:(x.get('ordine',0),str(x.get('posto','')),x['denominazione'])):
                         c=ft.Checkbox(label=f"{d['denominazione']} — posto {d['posto']}",
                                       value=d['esito']=='PRESENTE')
-                        checks[d['assegnazione_id']]=c;listbox.controls.append(c)
+                        checks[d['assegnazione_id']]=c
+                        righe_ditte.append((d['denominazione'].casefold(),c))
                     for d in snapshot['esclusi']:
                         excluded.controls.append(ft.Text(f"{d['denominazione']} — posto {d['posto']}: {d['stato']}",size=12))
                     notes.value=snapshot.get('note','')
                     status.value=f"{snapshot['stato']} — {len(checks)} ditte da rilevare; {len(snapshot['esclusi'])} escluse"
-                    if not checks:listbox.controls.append(ft.Text('Nessuna ditta tenuta alla presenza in questa giornata.'))
+                    filtra_ditte()
                 except Exception as exc:
                     status.value=str(exc)
                     current['ids']=set()
@@ -631,12 +648,13 @@ def main(page: ft.Page):
                     page.pop_dialog();notify(f'Rilevazione {"confermata" if confirm else "salvata in bozza"}: {a} presenti, {b} assenti.')
                 except Exception as exc:status.value=str(exc);page.update()
             day.on_change=load;gd.on_change=load;gd.on_select=load
+            ricerca_ditta.on_change=filtra_ditte
             dlg=ft.AlertDialog(modal=True,title=ft.Text('Rilevazione presenze'),
                 content=ft.Column([ft.Row([day,gd],wrap=True),w,status,
                     ft.Row([ft.TextButton('Tutte presenti',on_click=lambda e:toggle(True)),
                             ft.TextButton('Nessuna presente',on_click=lambda e:toggle(False))]),
                     ft.Text('Spuntare le ditte PRESENTI; le altre risulteranno ASSENTI dopo conferma.'),
-                    listbox,ft.Text('Escluse (sospese, cessate, fuori validità):'),excluded,notes,reason],
+                    ricerca_ditta,conteggio_ricerca,listbox,ft.Text('Escluse (sospese, cessate, fuori validità):'),excluded,notes,reason],
                     width=650,height=580,scroll=ft.ScrollMode.AUTO),
                 actions=[ft.TextButton('Annulla',on_click=lambda e:page.pop_dialog()),
                     ft.OutlinedButton('Salva bozza',on_click=lambda e:save(False)),

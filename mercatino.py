@@ -289,15 +289,19 @@ def anteprima(uid,giorno,giornata_id):
         for a,d in s.execute(q):
             stato=_stato(s,a,giorno)
             if d.stato!='Attivo' and stato=='Attivo':stato=d.stato
-            record=dict(assegnazione_id=a.id,ditta_id=d.id,denominazione=d.denominazione,posto=a.posto,stato=stato)
+            record=dict(assegnazione_id=a.id,ditta_id=d.id,denominazione=d.denominazione,posto=a.posto,ordine=a.ordine,stato=stato)
             (eligible if stato=='Attivo' else excluded).append(record)
         survey=s.scalar(select(Rilevazione).where(Rilevazione.giorno==giorno,Rilevazione.giornata_id==g.id))
         if survey:
-            results=list(s.scalars(select(Esito).where(Esito.rilevazione_id==survey.id)))
+            results=list(s.scalars(select(Esito).join(Assegnazione,Assegnazione.id==Esito.assegnazione_id)
+                .where(Esito.rilevazione_id==survey.id)
+                .order_by(Assegnazione.ordine,Assegnazione.posto,Esito.denominazione)))
+            ordine_per_id={a.id:a.ordine for a in s.scalars(select(Assegnazione).where(
+                Assegnazione.id.in_([e.assegnazione_id for e in results])))}
             # Riapertura: snapshot storico non modificabile tramite riconfigurazione delle assegnazioni.
             return dict(rilevazione_id=survey.id,stato=survey.stato,
                         ditte=[dict(assegnazione_id=e.assegnazione_id,ditta_id=e.ditta_id,denominazione=e.denominazione,
-                                    posto=e.posto,esito=e.esito) for e in results if e.esito in ('PRESENTE','ASSENTE')],
+                                    posto=e.posto,ordine=ordine_per_id.get(e.assegnazione_id,0),esito=e.esito) for e in results if e.esito in ('PRESENTE','ASSENTE')],
                         esclusi=[dict(assegnazione_id=e.assegnazione_id,denominazione=e.denominazione,posto=e.posto,
                                       stato=e.esito) for e in results if e.esito not in ('PRESENTE','ASSENTE')],
                         note=survey.note)
