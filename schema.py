@@ -22,7 +22,7 @@ def adopt_legacy():
     """Stamp only if all tables AND columns from baseline exist; no silent schema changes."""
     insp = inspect(engine)
     existing = set(insp.get_table_names())
-    required = set(Base.metadata.tables) - {'attivita_economiche', 'mercatino_ditte', 'mercatino_assenze'}
+    required = set(Base.metadata.tables) - {'attivita_economiche', 'mercatino_ditte', 'mercatino_assenze', 'mercatino_rilevazioni', 'mercatino_calendario', 'mercatino_luoghi', 'mercatino_giornate', 'mercatino_assegnazioni', 'mercatino_provvedimenti', 'mercatino_provvedimenti_assegnazioni', 'mercatino_esiti'}
     if not existing.intersection(required):
         return False
     missing = required - existing

@@ -116,7 +116,7 @@ def main(page: ft.Page):
                 ft.Text('Sistema Informativo Polizia Amministrativa', size=15, text_align=ft.TextAlign.CENTER),
                 ft.Divider(), username, password, error,
                 ft.Button('Accedi', icon=ft.Icons.LOGIN, width=350, on_click=submit),
-                ft.Row([ft.Text('© 2026', size=12, color=ft.Colors.GREY_600), ft.TextButton('bleish', url='https://github.com/bleish-git/sipa'), ft.Text('• SIPA v0.57 • Licenza MIT', size=12, color=ft.Colors.GREY_600)], spacing=3, alignment=ft.MainAxisAlignment.CENTER),
+                ft.Row([ft.Text('© 2026', size=12, color=ft.Colors.GREY_600), ft.TextButton('bleish', url='https://github.com/bleish-git/sipa'), ft.Text('• SIPA v0.60 • Licenza MIT', size=12, color=ft.Colors.GREY_600)], spacing=3, alignment=ft.MainAxisAlignment.CENTER),
             ], tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15))
         page.add(ft.Container(content=card, alignment=ft.Alignment.CENTER, expand=True, bgcolor=ft.Colors.BLUE_GREY_50))
         page.update()
@@ -353,199 +353,427 @@ def main(page: ft.Page):
         refresh(initial=True)
 
     def render_mercatino(content):
+        """Mercatino: anagrafiche, assegnazioni, provvedimenti, presenze e stampe."""
         from datetime import date
-        from mercatino import (elenco as elenco_m, luoghi as luoghi_m, dettaglio as dettaglio_m,
-                               salva as salva_m, assenze as assenze_m, segna_assenza, matrice,
-                               assenze_per_giorno, data_input, STATI)
-        from stampa_mercatino import (stampa_elenco as pdf_elenco, stampa_assenze as pdf_assenze,
-                                    stampa_assenze_giorno as pdf_giorno)
-        can_create = has_permission(user['id'], 'mercatino.create')
-        can_update = has_permission(user['id'], 'mercatino.update')
-        can_absence = has_permission(user['id'], 'mercatino.absence')
-        can_export = has_permission(user['id'], 'mercatino.export')
-        cerca = ft.TextField(label='Ricerca denominazione (min. 3 caratteri)', width=380,
-                             prefix_icon=ft.Icons.SEARCH)
-        filtro_stato = ft.Dropdown(label='Stato', value='Tutti', width=160,
-                         options=[ft.dropdown.Option(x) for x in ('Tutti',)+STATI])
-        locations = luoghi_m(user['id'])
-        selected_locations = set(locations)
-        location_chips = ft.Text('Luoghi: tutti' if locations else 'Nessun luogo registrato', size=12)
-        risultati = ft.Column(spacing=4)
-        totale = ft.Text(size=12, color=ft.Colors.GREY_700)
-        anno = ft.TextField(label='Anno prospetti', width=120, value=str(date.today().year))
-        shown = []
-        def current_filter():
-            return None if selected_locations == set(locations) else set(selected_locations)
-        def refresh(e=None, initial=False):
-            nonlocal shown, locations
-            q=(cerca.value or '').strip()
-            if q and len(q)<3:
-                shown=[]; risultati.controls=[]
-                totale.value='Inserisci almeno 3 caratteri complessivi per cercare.'
-                if not initial: page.update()
-                return
-            shown=elenco_m(user['id'],q,current_filter(),filtro_stato.value or 'Tutti')
-            totale.value=f'{len(shown)} ditte trovate'
-            risultati.controls=[]
-            for d in shown:
-                color={'Attivo':ft.Colors.GREEN_700,'Sospeso':ft.Colors.AMBER_800,
-                       'Cessato':ft.Colors.RED_700}[d['stato']]
-                buttons=[]
-                if can_absence and d['stato'] == 'Attivo':
-                    buttons.append(ft.IconButton(ft.Icons.EVENT_BUSY,tooltip='Registra / annulla assenza',
-                               on_click=lambda e, pk=d['id']: open_absence(pk)))
-                buttons.append(ft.IconButton(ft.Icons.EVENT_NOTE,tooltip='Prospetto assenze della ditta',
-                               on_click=lambda e, pk=d['id']: print_annual(pk)))
-                risultati.controls.append(ft.Container(bgcolor=ft.Colors.BLUE_GREY_50, border_radius=8,padding=10,
-                   content=ft.Row([
-                     ft.Column([ft.Text(d['denominazione'],weight=ft.FontWeight.BOLD),
-                       ft.Text(f"Posto {d['numero_posto']} • {d['luogo']}",size=12)],expand=True,spacing=2),
-                     ft.Text(d['stato'],color=color,width=85),
-                     ft.IconButton(ft.Icons.EDIT_OUTLINED,tooltip='Apri scheda',
-                                   on_click=lambda e,pk=d['id']: open_detail(pk)),*buttons])))
-            if not shown:
-                risultati.controls=[ft.Text('Nessuna ditta corrispondente ai filtri.')]
-            if not initial: page.update()
-        def select_locations(e=None):
-            checks={x:ft.Checkbox(label=x,value=x in selected_locations) for x in locations}
-            dlg=ft.AlertDialog(modal=True,title=ft.Text('Seleziona luoghi mercatino'),
-                content=ft.Column(list(checks.values()) or [ft.Text('Nessun luogo disponibile')],
-                   width=370,height=300,scroll=ft.ScrollMode.AUTO),actions=[])
-            def apply(ev):
-                selected_locations.clear()
-                selected_locations.update(x for x,c in checks.items() if c.value)
-                location_chips.value=('Luoghi: tutti' if selected_locations==set(locations) else
-                                      'Luoghi: '+(', '.join(sorted(selected_locations)) or 'nessuno'))
-                page.pop_dialog();refresh()
-            dlg.actions=[ft.TextButton('Annulla',on_click=lambda ev:page.pop_dialog()),
-                         ft.Button('Applica',on_click=apply)]
-            page.show_dialog(dlg)
-        def open_detail(pk=None):
-            if pk is None and not can_create:
-                notify('Inserimento non autorizzato',True);return
-            d=dettaglio_m(user['id'],pk) if pk is not None else {}
-            editable=can_update if pk is not None else can_create
-            values={k:ft.TextField(label=label,value=d.get(k,'') or '',read_only=not editable)
-                    for k,label in [('denominazione','Denominazione *'),('numero_posto','Numero posto *'),
-                                    ('luogo','Luogo mercatino *')]}
-            values['stato']=ft.Dropdown(label='Stato',value=d.get('stato','Attivo'),
-                options=[ft.dropdown.Option(x) for x in STATI],disabled=not editable)
+        from mercatino import (GIORNI, STATI, TIPI, data_input, luoghi as m_luoghi,
+             giornate as m_giornate, elenco as m_elenco, dettaglio as m_dettaglio,
+             salva_luogo, salva_giornata, salva_ditta, salva_assegnazione,
+             modifica_luogo, elimina_luogo, modifica_giornata, elimina_giornata,
+             modifica_assegnazione, elimina_assegnazione,
+             provvedimenti, salva_provvedimento, anteprima, salva_rilevazione,
+             bozze_rilevazioni, elimina_bozza,
+             accertamenti, assenze_anno)
+        from stampa_mercatino import (stampa_elenco,stampa_accertamento,
+                                      stampa_assenze_ditta,stampa_assenze_generale)
+        uid=user['id']; username=user['username']
+        can_edit=has_permission(uid,'mercatino.update'); can_create=has_permission(uid,'mercatino.create')
+        can_presence=has_permission(uid,'mercatino.absence');can_print=has_permission(uid,'mercatino.export')
+        week=lambda raw: GIORNI[data_input(raw).weekday()] if raw else ''
+        today=date.today().strftime('%d/%m/%Y')
+        search=ft.TextField(label='Cerca ditta (almeno 3 caratteri)',width=340,prefix_icon=ft.Icons.SEARCH)
+        state=ft.Dropdown(label='Stato',value='Tutti',width=150,
+                          options=[ft.dropdown.Option(x) for x in ('Tutti',)+STATI])
+        summary=ft.Text(size=12)
+        result=ft.Column(spacing=4)
+        year=ft.TextField(label='Anno prospetto',value=str(date.today().year),width=115)
+        selected_places=set()
+        def fail(e):notify(str(e),True)
+        def textinput(label,value='',width=280):return ft.TextField(label=label,value=str(value or ''),width=width)
+        def dropdown(label,options,value=None,width=280):
+            return ft.Dropdown(label=label,value=str(value) if value is not None else None,width=width,
+                options=[ft.dropdown.Option(key=str(key),text=str(text)) for key,text in options])
+        def date_field(label,initial=today):
+            field=textinput(label+' (GG/MM/AAAA)',initial,220)
+            return field
+        def dialog(title,controls,on_save=None,button='Salva',width=570,height=450):
             error=ft.Text(color=ft.Colors.RED_700)
-            dlg=ft.AlertDialog(modal=True,title=ft.Text('Nuova ditta mercatino' if pk is None else 'Scheda ditta mercatino'),
-                content=ft.Column([*values.values(),error],tight=True,width=470),actions=[])
-            def save(ev):
-                try:
-                    salva_m(user['id'],user['username'],{k:v.value for k,v in values.items()},pk)
-                    page.pop_dialog()
-                    locations[:]=luoghi_m(user['id'])
-                    selected_locations.update(locations)
-                    refresh();notify('Ditta salvata')
-                except Exception as exc:
-                    error.value=str(exc);page.update()
-            dlg.actions=[ft.TextButton('Chiudi',on_click=lambda ev:page.pop_dialog())]
-            if editable:dlg.actions.append(ft.Button('Salva',on_click=save))
+            actions=[ft.TextButton('Annulla',on_click=lambda e:page.pop_dialog())]
+            if on_save:
+                def do_save(e):
+                    try:on_save();page.pop_dialog();refresh();notify('Operazione completata.')
+                    except Exception as exc:error.value=str(exc);page.update()
+                actions.append(ft.Button(button,on_click=do_save))
+            dlg=ft.AlertDialog(modal=True,title=ft.Text(title),
+                content=ft.Column(list(controls)+[error],width=width,height=height,scroll=ft.ScrollMode.AUTO),
+                actions=actions)
             page.show_dialog(dlg)
-        def open_absence(pk):
-            d=dettaglio_m(user['id'],pk)
-            if d['stato'] != 'Attivo':
-                notify('È possibile registrare assenze soltanto per ditte attive.', True)
-                return
-            input_day=ft.TextField(label='Giorno (GG/MM/AAAA)',value=date.today().strftime('%d/%m/%Y'))
-            present=ft.Text(size=12)
-            error=ft.Text(color=ft.Colors.RED_700)
-            dlg=ft.AlertDialog(modal=True,title=ft.Text('Assenza — '+d['denominazione']),
-                content=ft.Column([input_day,present,error],tight=True,width=400),actions=[])
-            def check():
-                from mercatino import data_input
-                current=data_input(input_day.value)
-                present.value=('Assenza già registrata' if current in assenze_m(user['id'],pk,current.year)
-                               else 'Nessuna assenza registrata per la data')
-            def apply(ev, absent):
-                try:
-                    changed=segna_assenza(user['id'],user['username'],pk,input_day.value,absent)
-                    page.pop_dialog();notify('Registro assenze aggiornato' if changed else 'Nessuna modifica necessaria')
-                except Exception as exc:
-                    error.value=str(exc);page.update()
-            def check_day(ev):
-                if len(input_day.value or '') != 10:
-                    present.value = ''
-                else:
-                    try: check()
-                    except ValueError: present.value = 'Data non valida'
+            return dlg
+        def gestisci_luoghi(e=None):
+            records=ft.Column(spacing=3)
+            nome=textinput('Nome luogo *',width=430)
+            desc=textinput('Descrizione',width=430)
+            selected={'id':None,'confirm':False}
+            notice=ft.Text(color=ft.Colors.RED_700)
+            btn_delete=ft.OutlinedButton('Elimina selezionato',disabled=True)
+            def reset(e=None):
+                selected.update(id=None,confirm=False)
+                nome.value='';desc.value='';notice.value=''
+                btn_delete.disabled=True;btn_delete.text='Elimina selezionato';page.update()
+            def choose(item):
+                selected.update(id=item['id'],confirm=False)
+                nome.value=item['nome'];desc.value=item['descrizione'] or ''
+                notice.value='Modifica del luogo selezionato.'
+                btn_delete.disabled=not can_edit;btn_delete.text='Elimina selezionato'
                 page.update()
-            input_day.on_change = check_day
-            try:check()
-            except ValueError:pass
-            dlg.actions=[ft.TextButton('Chiudi',on_click=lambda ev:page.pop_dialog()),
-                         ft.OutlinedButton('Annulla assenza',on_click=lambda ev:apply(ev,False)),
-                         ft.Button('Segna assente',on_click=lambda ev:apply(ev,True))]
-            page.show_dialog(dlg)
-        def print_list(ev):
-            if not can_export:notify('Stampa non autorizzata',True);return
-            try:
-                q=(cerca.value or '').strip()
-                if q and len(q)<3:raise ValueError('La ricerca deve avere almeno 3 caratteri')
-                rows=elenco_m(user['id'],q,current_filter(),filtro_stato.value or 'Tutti')
-                path=pdf_elenco(rows,q,current_filter(),filtro_stato.value or 'Tutti')
-                notify('PDF creato: '+str(path))
-            except Exception as exc:notify('Stampa non riuscita: '+str(exc),True)
-        def print_annual(pk=None):
-            if not can_export:notify('Stampa non autorizzata',True);return
-            try:
-                q=(cerca.value or '').strip()
-                if q and len(q)<3:raise ValueError('La ricerca deve avere almeno 3 caratteri')
-                if pk is None:
-                    # Il prospetto generale include sempre tutte le ditte attive
-                    # che corrispondono ai filtri di denominazione e luogo.
-                    d, dates, entries=matrice(user['id'],int(anno.value),q,current_filter(),
-                                               'Attivo',None)
-                else:
-                    # La certificazione individuale non dipende dai filtri dell'elenco.
-                    d, dates, entries=matrice(user['id'],int(anno.value),
-                                               '',None,'Tutti',pk)
-                path=pdf_assenze(d,dates,entries,int(anno.value),pk is not None)
-                notify('PDF creato: '+str(path))
-            except Exception as exc:notify('Stampa prospetto non riuscita: '+str(exc),True)
-        def print_day_dialog(ev):
-            if not can_export:
-                notify('Stampa non autorizzata', True)
-                return
-            selected_day = ft.TextField(label='Data di rilevazione (GG/MM/AAAA)',
-                                        value=date.today().strftime('%d/%m/%Y'), width=250)
-            error = ft.Text(color=ft.Colors.RED_700)
-            dlg = ft.AlertDialog(modal=True, title=ft.Text('Attestazione assenze per data'),
-                                 content=ft.Column([selected_day, error], tight=True, width=340), actions=[])
-            def generate(event):
+            def reload():
+                records.controls.clear()
+                for item in m_luoghi(uid):
+                    records.controls.append(ft.Row([
+                        ft.TextButton(item['nome'],on_click=lambda e,x=item:choose(x)),
+                        ft.Text((item['descrizione'] or '')[:75],size=12,expand=True)]))
+                if not records.controls:records.controls.append(ft.Text('Nessun luogo registrato.'))
+            def save(e):
                 try:
-                    day = data_input(selected_day.value)
-                    records = assenze_per_giorno(user['id'], day)
-                    path = pdf_giorno(records, day)
-                    page.pop_dialog()
-                    notify('PDF creato: ' + str(path))
-                except Exception as exc:
-                    error.value = str(exc)
-                    page.update()
-            dlg.actions = [ft.TextButton('Annulla', on_click=lambda event: page.pop_dialog()),
-                           ft.Button('Stampa PDF', icon=ft.Icons.PRINT, on_click=generate)]
+                    if selected['id']:
+                        if not can_edit:raise PermissionError('Modifica non autorizzata.')
+                        modifica_luogo(uid,username,selected['id'],nome.value,desc.value)
+                    else:
+                        if not can_create:raise PermissionError('Inserimento non autorizzato.')
+                        salva_luogo(uid,username,nome.value,desc.value)
+                    reset();reload();refresh();notice.value='Salvataggio effettuato.';page.update()
+                except Exception as exc:notice.value=str(exc);page.update()
+            def delete(e):
+                if not selected['id'] or not can_edit:return
+                if not selected['confirm']:
+                    selected['confirm']=True;btn_delete.text='Conferma eliminazione';notice.value='Premere nuovamente per eliminare il luogo selezionato.';page.update();return
+                try:
+                    elimina_luogo(uid,username,selected['id'])
+                    reset();reload();refresh();notice.value='Luogo eliminato.';page.update()
+                except Exception as exc:selected['confirm']=False;btn_delete.text='Elimina selezionato';notice.value=str(exc);page.update()
+            btn_delete.on_click=delete
+            reload()
+            dlg=ft.AlertDialog(modal=True,title=ft.Text('Gestione luoghi di mercato'),
+                content=ft.Column([ft.Text('Luoghi registrati',weight=ft.FontWeight.BOLD),records,
+                    ft.Divider(),ft.Text('Inserimento / modifica',weight=ft.FontWeight.BOLD),nome,desc,notice,
+                    ft.Row([ft.OutlinedButton('Nuovo',on_click=reset),
+                            ft.Button('Salva',on_click=save,disabled=not(can_create or can_edit)),btn_delete],wrap=True)],
+                    width=620,height=520,scroll=ft.ScrollMode.AUTO),
+                actions=[ft.TextButton('Chiudi',on_click=lambda e:page.pop_dialog())])
             page.show_dialog(dlg)
 
-        cerca.on_change=refresh
-        filtro_stato.on_change=refresh
-        filtro_stato.on_select=refresh
-        tools=[ft.OutlinedButton('Aggiorna',icon=ft.Icons.REFRESH,on_click=refresh)]
-        if can_create:tools.append(ft.Button('Nuova ditta',icon=ft.Icons.ADD,on_click=lambda ev:open_detail()))
-        if can_export:
-            tools.extend([ft.OutlinedButton('Stampa elenco PDF',icon=ft.Icons.PRINT,on_click=print_list),
-                          ft.OutlinedButton('Prospetto annuale complessivo PDF',icon=ft.Icons.EVENT_NOTE,
-                                            on_click=lambda ev:print_annual()),
-                          ft.OutlinedButton('Attestazione assenze per data PDF',icon=ft.Icons.PRINT,
-                                            on_click=print_day_dialog)])
-        content.controls.extend([ft.Text('Registro ditte del mercatino',size=17,weight=ft.FontWeight.W_600),
-           ft.Row([cerca,filtro_stato],wrap=True,spacing=12),
-           ft.Row([ft.OutlinedButton('Luoghi (scelta multipla)',icon=ft.Icons.FILTER_ALT,
-                                       on_click=select_locations),location_chips],wrap=True),
-           ft.Row([anno],wrap=True),ft.Row(tools,wrap=True),totale,risultati])
-        refresh(initial=True)
+        def gestisci_giornate(e=None):
+            places=m_luoghi(uid)
+            if not places:notify('Inserire prima un luogo di mercato.',True);return
+            records=ft.Column(spacing=3)
+            place=dropdown('Luogo',[(x['id'],x['nome']) for x in places],places[0]['id'],390)
+            weekday=dropdown('Giorno settimanale',list(enumerate(GIORNI)),0,250)
+            selected={'id':None,'confirm':False}
+            notice=ft.Text(color=ft.Colors.RED_700)
+            btn_delete=ft.OutlinedButton('Elimina selezionata',disabled=True)
+            def reset(e=None):
+                selected.update(id=None,confirm=False);place.value=str(places[0]['id']);weekday.value='0'
+                btn_delete.disabled=True;btn_delete.text='Elimina selezionata';notice.value='';page.update()
+            def choose(item):
+                selected.update(id=item['id'],confirm=False)
+                place.value=str(item['luogo_id']);weekday.value=str(item['giorno'])
+                btn_delete.disabled=not can_edit;btn_delete.text='Elimina selezionata';notice.value='';page.update()
+            def reload():
+                records.controls.clear()
+                for item in m_giornate(uid):
+                    records.controls.append(ft.Row([ft.TextButton(item['descrizione'],on_click=lambda e,x=item:choose(x))]))
+                if not records.controls:records.controls.append(ft.Text('Nessuna giornata configurata.'))
+            def save(e):
+                try:
+                    if selected['id']:
+                        if not can_edit:raise PermissionError('Modifica non autorizzata.')
+                        modifica_giornata(uid,username,selected['id'],place.value,weekday.value)
+                    else:
+                        if not can_create:raise PermissionError('Inserimento non autorizzato.')
+                        salva_giornata(uid,username,place.value,weekday.value)
+                    reset();reload();refresh();notice.value='Salvataggio effettuato.';page.update()
+                except Exception as exc:notice.value=str(exc);page.update()
+            def delete(e):
+                if not selected['id'] or not can_edit:return
+                if not selected['confirm']:
+                    selected['confirm']=True;btn_delete.text='Conferma eliminazione';notice.value='Premere nuovamente per eliminare la giornata.';page.update();return
+                try:
+                    elimina_giornata(uid,username,selected['id'])
+                    reset();reload();refresh();notice.value='Giornata eliminata.';page.update()
+                except Exception as exc:selected['confirm']=False;btn_delete.text='Elimina selezionata';notice.value=str(exc);page.update()
+            btn_delete.on_click=delete;reload()
+            dlg=ft.AlertDialog(modal=True,title=ft.Text('Gestione giornate di mercato'),
+                content=ft.Column([ft.Text('Giornate registrate',weight=ft.FontWeight.BOLD),records,
+                    ft.Divider(),ft.Text('Inserimento / modifica',weight=ft.FontWeight.BOLD),place,weekday,notice,
+                    ft.Row([ft.OutlinedButton('Nuova',on_click=reset),
+                            ft.Button('Salva',on_click=save,disabled=not(can_create or can_edit)),btn_delete],wrap=True)],
+                    width=580,height=520,scroll=ft.ScrollMode.AUTO),
+                actions=[ft.TextButton('Chiudi',on_click=lambda e:page.pop_dialog())])
+            page.show_dialog(dlg)
+        def edit_ditta(pk=None):
+            d=m_dettaglio(uid,pk) if pk else {}
+            nome=textinput('Denominazione *',d.get('denominazione',''),480)
+            stato=dropdown('Stato anagrafico',[(x,x) for x in STATI],d.get('stato','Attivo'),220)
+            notes=textinput('Note',d.get('note',''),480)
+            controls=[nome,stato,notes]
+            if pk:
+                ass=d['assegnazioni']
+                controls.append(ft.Text('Assegnazioni: '+(' | '.join(
+                    f"{a['luogo']} {a['giorno'].lower()} (posto {a['posto']})" for a in ass) or 'nessuna')))
+                controls.append(ft.Text('Per aggiungere un posto o un provvedimento usare i pulsanti nella riga della ditta.',size=12))
+            dialog('Scheda ditta' if pk else 'Nuova ditta',controls,
+                lambda:salva_ditta(uid,username,nome.value,stato.value,notes.value,pk))
+        def gestisci_assegnazioni(pk):
+            sessions=m_giornate(uid)
+            if not sessions:notify('Configurare prima una giornata di mercato.',True);return
+            d=m_dettaglio(uid,pk)
+            rows=ft.Column(spacing=2)
+            gd=dropdown('Giornata mercato',[(x['id'],x['descrizione']) for x in sessions],sessions[0]['id'],445)
+            posto=textinput('Numero posto *',width=170)
+            ordine=textinput('Ordine rilevazione',0,170)
+            dal=date_field('Valida dal','');al=date_field('Valida al','')
+            selected={'id':None,'confirm':False}
+            notice=ft.Text(color=ft.Colors.RED_700)
+            btn_delete=ft.OutlinedButton('Elimina selezionata',disabled=True)
+            def reset(e=None):
+                selected.update(id=None,confirm=False);gd.value=str(sessions[0]['id'])
+                posto.value='';ordine.value='0';dal.value='';al.value=''
+                btn_delete.disabled=True;btn_delete.text='Elimina selezionata';notice.value='';page.update()
+            def choose(item):
+                selected.update(id=item['id'],confirm=False)
+                gd.value=str(item['giornata_id']);posto.value=item['posto'];ordine.value=str(item['ordine'])
+                dal.value=item['dal'].strftime('%d/%m/%Y') if item['dal'] else ''
+                al.value=item['al'].strftime('%d/%m/%Y') if item['al'] else ''
+                btn_delete.disabled=not can_edit;btn_delete.text='Elimina selezionata';notice.value='';page.update()
+            def reload():
+                rows.controls.clear()
+                for item in m_dettaglio(uid,pk)['assegnazioni']:
+                    label=f"{item['luogo']} {item['giorno'].lower()} (posto {item['posto']})"
+                    period=(f" — {item['dal']:%d/%m/%Y}" if item['dal'] else '')+(f" / {item['al']:%d/%m/%Y}" if item['al'] else '')
+                    rows.controls.append(ft.Row([ft.TextButton(label,on_click=lambda e,x=item:choose(x)),
+                         ft.Text(f"Ord. {item['ordine']}{period}",size=11,expand=True)]))
+                if not rows.controls:rows.controls.append(ft.Text('Nessuna assegnazione registrata.'))
+            def save(e):
+                try:
+                    if not can_edit:raise PermissionError('Modifica non autorizzata.')
+                    if selected['id']:
+                        modifica_assegnazione(uid,username,selected['id'],gd.value,posto.value,ordine.value,dal.value,al.value)
+                    else:
+                        salva_assegnazione(uid,username,pk,gd.value,posto.value,ordine.value,dal.value,al.value)
+                    reset();reload();refresh();notice.value='Assegnazione salvata.';page.update()
+                except Exception as exc:notice.value=str(exc);page.update()
+            def delete(e):
+                if not selected['id'] or not can_edit:return
+                if not selected['confirm']:
+                    selected['confirm']=True;btn_delete.text='Conferma eliminazione';notice.value='Premere nuovamente per eliminare l’assegnazione.';page.update();return
+                try:
+                    elimina_assegnazione(uid,username,selected['id'])
+                    reset();reload();refresh();notice.value='Assegnazione eliminata.';page.update()
+                except Exception as exc:selected['confirm']=False;btn_delete.text='Elimina selezionata';notice.value=str(exc);page.update()
+            btn_delete.on_click=delete;reload()
+            dlg=ft.AlertDialog(modal=True,title=ft.Text('Assegnazioni — '+d['denominazione']),
+                content=ft.Column([ft.Text('Assegnazioni registrate',weight=ft.FontWeight.BOLD),rows,
+                    ft.Divider(),ft.Text('Inserimento / modifica',weight=ft.FontWeight.BOLD),gd,
+                    ft.Row([posto,ordine]),ft.Row([dal,al],wrap=True),notice,
+                    ft.Row([ft.OutlinedButton('Nuova',on_click=reset),
+                            ft.Button('Salva',on_click=save,disabled=not can_edit),btn_delete],wrap=True)],
+                    width=650,height=560,scroll=ft.ScrollMode.AUTO),
+                actions=[ft.TextButton('Chiudi',on_click=lambda e:page.pop_dialog())])
+            page.show_dialog(dlg)
+        def edit_provvedimento(pk):
+            d=m_dettaglio(uid,pk)
+            ass=d['assegnazioni']
+            if not ass:notify('Nessuna assegnazione disponibile.',True);return
+            checks={a['id']:ft.Checkbox(label=f"{a['luogo']} {a['giorno']} — posto {a['posto']}") for a in ass}
+            tipo=dropdown('Tipo provvedimento',[(x,x) for x in TIPI],'Sospensione')
+            numero=textinput('Numero atto',width=220);atto=date_field('Data atto')
+            dal=date_field('Efficace dal');al=date_field('Efficace al','')
+            motivo=textinput('Motivazione',width=450)
+            old=provvedimenti(uid,pk)
+            notes=ft.Column([ft.Text(f"{p['tipo']} n. {p['numero_atto']} — {p['dal']:%d/%m/%Y}"
+                         +(f" – {p['al']:%d/%m/%Y}" if p['al'] else '')) for p in old])
+            dialog('Provvedimenti — '+d['denominazione'],[
+                ft.Text('Selezionare una o più assegnazioni interessate'),*checks.values(),
+                tipo,numero,atto,dal,al,motivo,ft.Text('Provvedimenti già presenti:'),notes],
+                lambda:salva_provvedimento(uid,username,[aid for aid,c in checks.items() if c.value],
+                    tipo.value,numero.value,atto.value,dal.value,al.value,motivo.value),height=590)
+        def open_presence(e=None, preset=None):
+            sessions=m_giornate(uid)
+            if not sessions:notify('Configurare prima luoghi e giornate.',True);return
+            day=date_field('Data rilevazione',preset['giorno'].strftime('%d/%m/%Y') if preset else today)
+            w=ft.Text(week(day.value),weight=ft.FontWeight.BOLD)
+            gd=dropdown('Luogo e giornata',[(x['id'],x['descrizione']) for x in sessions],
+                        preset['giornata_id'] if preset else sessions[0]['id'],440)
+            status=ft.Text();checks={};excluded=ft.Column();listbox=ft.Column(spacing=3)
+            notes=textinput('Note rilevazione',width=520)
+            reason=textinput('Motivo rettifica (se rilevazione confermata)',width=520)
+            current={'ids':set(),'key':None,'state':'Nuova'}
+            def load(ev=None):
+                checks.clear();listbox.controls.clear();excluded.controls.clear();current['key']=None
+                try:
+                    w.value=week(day.value)
+                    snapshot=anteprima(uid,day.value,gd.value)
+                    current['ids']={d['assegnazione_id'] for d in snapshot['ditte']}
+                    current['key']=(data_input(day.value),int(gd.value))
+                    current['state']=snapshot['stato']
+                    for d in snapshot['ditte']:
+                        c=ft.Checkbox(label=f"{d['denominazione']} — posto {d['posto']}",
+                                      value=d['esito']=='PRESENTE')
+                        checks[d['assegnazione_id']]=c;listbox.controls.append(c)
+                    for d in snapshot['esclusi']:
+                        excluded.controls.append(ft.Text(f"{d['denominazione']} — posto {d['posto']}: {d['stato']}",size=12))
+                    notes.value=snapshot.get('note','')
+                    status.value=f"{snapshot['stato']} — {len(checks)} ditte da rilevare; {len(snapshot['esclusi'])} escluse"
+                    if not checks:listbox.controls.append(ft.Text('Nessuna ditta tenuta alla presenza in questa giornata.'))
+                except Exception as exc:
+                    status.value=str(exc)
+                    current['ids']=set()
+                page.update()
+            def toggle(value):
+                for c in checks.values():c.value=value
+                page.update()
+            def save(confirm=False):
+                try:
+                    if not current['ids'] or current['key']!=(data_input(day.value),int(gd.value)):
+                        raise ValueError('Selezionare una giornata valida con ditte assegnate.')
+                    present={aid for aid,c in checks.items() if c.value}
+                    a,b=salva_rilevazione(uid,username,day.value,gd.value,present,current['ids'],
+                        conferma=confirm,motivo=reason.value, note=notes.value)
+                    page.pop_dialog();notify(f'Rilevazione {"confermata" if confirm else "salvata in bozza"}: {a} presenti, {b} assenti.')
+                except Exception as exc:status.value=str(exc);page.update()
+            day.on_change=load;gd.on_change=load;gd.on_select=load
+            dlg=ft.AlertDialog(modal=True,title=ft.Text('Rilevazione presenze'),
+                content=ft.Column([ft.Row([day,gd],wrap=True),w,status,
+                    ft.Row([ft.TextButton('Tutte presenti',on_click=lambda e:toggle(True)),
+                            ft.TextButton('Nessuna presente',on_click=lambda e:toggle(False))]),
+                    ft.Text('Spuntare le ditte PRESENTI; le altre risulteranno ASSENTI dopo conferma.'),
+                    listbox,ft.Text('Escluse (sospese, cessate, fuori validità):'),excluded,notes,reason],
+                    width=650,height=580,scroll=ft.ScrollMode.AUTO),
+                actions=[ft.TextButton('Annulla',on_click=lambda e:page.pop_dialog()),
+                    ft.OutlinedButton('Salva bozza',on_click=lambda e:save(False)),
+                    ft.Button('Conferma rilevazione',on_click=lambda e:save(True))])
+            page.show_dialog(dlg);load()
+        def gestisci_bozze(e=None):
+            """Apri o elimina rilevazioni salvate ma non ancora confermate."""
+            records=ft.Column(spacing=7)
+            info=ft.Text(color=ft.Colors.RED_700)
+            def load():
+                records.controls.clear()
+                try:
+                    items=bozze_rilevazioni(uid)
+                    if not items:
+                        records.controls.append(ft.Text('Nessuna bozza presente.'))
+                    for item in items:
+                        def reopen(ev, item=item):
+                            page.pop_dialog()
+                            open_presence(preset=item)
+                        def request_delete(ev, item=item):
+                            def confirm_delete(ev):
+                                try:
+                                    elimina_bozza(uid,username,item['id'])
+                                    page.pop_dialog()
+                                    load()
+                                    notify('Bozza eliminata. La rilevazione potrà essere ricreata.')
+                                except Exception as exc:
+                                    error.value=str(exc)
+                                    page.update()
+                            error=ft.Text(color=ft.Colors.RED_700)
+                            confirm=ft.AlertDialog(modal=True,title=ft.Text('Eliminare la bozza?'),
+                                content=ft.Column([
+                                    ft.Text(f"{item['giorno']:%d/%m/%Y} — {item['luogo']} ({item['giorno_settimana']})"),
+                                    ft.Text('Verranno eliminati anche gli esiti provvisori. Questa operazione non riguarda le rilevazioni confermate.'),
+                                    error],tight=True,width=440),
+                                actions=[ft.TextButton('Annulla',on_click=lambda e:page.pop_dialog()),
+                                         ft.Button('Conferma eliminazione',on_click=confirm_delete)])
+                            page.show_dialog(confirm)
+                        label=(f"{item['giorno']:%d/%m/%Y} — {item['luogo']} ({item['giorno_settimana']})"
+                               f" — {item['presenti']} presenti, {item['assenti']} assenti")
+                        actions=[ft.OutlinedButton('Apri',on_click=reopen)]
+                        if can_presence:
+                            actions.append(ft.TextButton('Elimina',on_click=request_delete))
+                        records.controls.append(ft.Column([
+                            ft.Text(label,weight=ft.FontWeight.W_500),
+                            ft.Text(f"Operatore: {item['operatore']}",size=11),
+                            ft.Row(actions,wrap=True),ft.Divider(height=5)
+                        ],spacing=2))
+                    info.value=f'{len(items)} bozze trovate.'
+                except Exception as exc:info.value=str(exc)
+                page.update()
+            dlg=ft.AlertDialog(modal=True,title=ft.Text('Gestione bozze delle rilevazioni'),
+                content=ft.Column([info,records],width=620,height=500,scroll=ft.ScrollMode.AUTO),
+                actions=[ft.TextButton('Chiudi',on_click=lambda e:page.pop_dialog()),
+                         ft.OutlinedButton('Aggiorna',on_click=lambda e:load())])
+            page.show_dialog(dlg)
+            load()
+
+        def print_list(e=None):
+            try:
+                records=m_elenco(uid,search.value, selected_places or None,state.value)
+                notify('PDF creato: '+str(stampa_elenco(records,search.value,selected_places,state.value)))
+            except Exception as exc:fail(exc)
+        def print_accertamento(e=None):
+            day=date_field('Data accertamento');w=ft.Text(week(day.value))
+            places=m_luoghi(uid)
+            place=dropdown('Luogo',[(0,'Tutti i luoghi')]+[(p['id'],p['nome']) for p in places],0,440)
+            day.on_change=lambda e:(setattr(w,'value',week(day.value)),page.update())
+            def run():
+                rows=accertamenti(uid,day.value,int(place.value) or None)
+                path=stampa_accertamento(rows,data_input(day.value))
+                notify('Accertamento PDF: '+str(path))
+            dialog('Accertamento assenze per data e luogo',[day,w,place],run,button='Stampa PDF',height=250)
+        def print_annual(pk=None):
+            try:
+                value=int(year.value)
+                if pk:
+                    d=m_dettaglio(uid,pk);rows=assenze_anno(uid,value,pk)
+                    path=stampa_assenze_ditta(d['denominazione'],value,rows)
+                else:
+                    records=m_elenco(uid,search.value,selected_places or None,'Tutti')
+                    all_rows=assenze_anno(uid,value)
+                    ids={d['id'] for d in records}
+                    path=stampa_assenze_generale(records,value,[r for r in all_rows if r['ditta_id'] in ids])
+                notify('PDF creato: '+str(path))
+            except Exception as exc:fail(exc)
+        def select_places(e=None):
+            places=m_luoghi(uid)
+            checks={p['id']:ft.Checkbox(label=p['nome'],value=(not selected_places or p['id'] in selected_places)) for p in places}
+            def apply():
+                selected_places.clear();selected_places.update(k for k,c in checks.items() if c.value)
+            dialog('Filtra luoghi',list(checks.values()) or [ft.Text('Nessun luogo')],apply,
+                   button='Applica',height=310)
+        def refresh(e=None):
+            try:
+                q=(search.value or '').strip()
+                if q and len(q)<3:
+                    result.controls.clear();summary.value='Inserire almeno 3 caratteri per cercare.';page.update();return
+                records=m_elenco(uid,q,selected_places or None,state.value)
+                summary.value=f'{len(records)} ditte trovate'
+                result.controls.clear()
+                for d in records:
+                    buttons=[ft.IconButton(ft.Icons.EDIT_OUTLINED,tooltip='Scheda ditta',
+                              on_click=lambda e,pk=d['id']:edit_ditta(pk))]
+                    if can_edit:
+                        buttons.extend([ft.IconButton(ft.Icons.ADD_LOCATION_ALT_OUTLINED,tooltip='Gestisci assegnazioni',
+                                         on_click=lambda e,pk=d['id']:gestisci_assegnazioni(pk)),
+                                        ft.IconButton(ft.Icons.GAVEL,tooltip='Provvedimenti',
+                                         on_click=lambda e,pk=d['id']:edit_provvedimento(pk))])
+                    if can_print:buttons.append(ft.IconButton(ft.Icons.EVENT_NOTE,tooltip='Assenze annuali ditta',
+                                         on_click=lambda e,pk=d['id']:print_annual(pk)))
+                    color={'Attivo':ft.Colors.GREEN_700,'Sospeso':ft.Colors.AMBER_800,'Cessato':ft.Colors.RED_700}[d['stato']]
+                    result.controls.append(ft.Container(bgcolor=ft.Colors.BLUE_GREY_50,border_radius=8,padding=10,
+                        content=ft.Row([ft.Column([ft.Text(d['denominazione'],weight=ft.FontWeight.BOLD),
+                            ft.Text(d['luoghi_posti'] or 'Nessuna assegnazione',size=12)],expand=True,spacing=3),
+                            ft.Text(d['stato'],color=color,width=75),*buttons])))
+                if not records:result.controls.append(ft.Text('Nessuna ditta registrata o corrispondente ai filtri.'))
+                page.update()
+            except Exception as exc:summary.value='Errore: '+str(exc);page.update()
+        search.on_change=refresh;state.on_change=refresh;state.on_select=refresh
+        buttons=[ft.OutlinedButton('Luoghi (filtro)',on_click=select_places),
+                 ft.OutlinedButton('Aggiorna',icon=ft.Icons.REFRESH,on_click=refresh)]
+        if can_create:
+            buttons.append(ft.Button('Nuova ditta',icon=ft.Icons.ADD,on_click=lambda e:edit_ditta()))
+        if can_create or can_edit:
+            buttons.extend([ft.OutlinedButton('Gestisci luoghi',on_click=gestisci_luoghi),
+                            ft.OutlinedButton('Gestisci giornate',on_click=gestisci_giornate)])
+        if can_presence:
+            buttons.append(ft.Button('Rileva presenze',icon=ft.Icons.CHECKLIST,on_click=open_presence))
+        if has_permission(uid,'mercatino.read'):
+            buttons.append(ft.OutlinedButton('Gestisci bozze',icon=ft.Icons.FOLDER_OPEN,on_click=gestisci_bozze))
+        if can_print:buttons.extend([ft.OutlinedButton('Elenco PDF',icon=ft.Icons.PRINT,on_click=print_list),
+            ft.OutlinedButton('Accertamento assenze per data / luogo',on_click=print_accertamento),
+            ft.OutlinedButton('Prospetto annuale',on_click=lambda e:print_annual())])
+        content.controls.extend([ft.Text('Mercatino — ditte e rilevazioni',size=18,weight=ft.FontWeight.W_600),
+            ft.Row([search,state,year],wrap=True),ft.Row(buttons,wrap=True),summary,result])
+        refresh()
 
     def render_admin(content):
         if not has_permission(user['id'], 'users.manage'):

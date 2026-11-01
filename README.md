@@ -1,6 +1,74 @@
+# SIPA v0.60 — Gestione anagrafiche e bozze Mercatino
+
+> **ATTENZIONE: la migrazione `0007_mercatino_ristrutturazione` elimina definitivamente tutti i dati del modulo Mercatino.** Gli altri moduli, utenti, permessi e audit non vengono azzerati. Le istruzioni del Mercatino delle versioni 0.57–0.59 riportate più sotto sono solo storiche e non si applicano alla v0.60.
+
+## Procedura di aggiornamento da v0.59
+
+1. Arrestare SIPA su **tutte** le postazioni collegate al database.
+2. Conservare una copia dell'installazione. Sostituire i file della patch, inclusa `migrations/versions/0007_mercatino_ristrutturazione.py`.
+3. Nella cartella del programma, con ambiente virtuale attivo, eseguire **una sola volta**:
+
+   **Linux Mint / macOS:**
+
+   ```bash
+   export SIPA_RESET_MERCATINO=CONFERMO_AZZERAMENTO
+   python cli.py upgrade-db --backup-dir ~/BackupSIPA
+   unset SIPA_RESET_MERCATINO
+   python cli.py db-version
+   python main.py
+   ```
+
+   **Windows PowerShell:**
+
+   ```powershell
+   $env:SIPA_RESET_MERCATINO = "CONFERMO_AZZERAMENTO"
+   python cli.py upgrade-db --backup-dir "$env:USERPROFILE\BackupSIPA"
+   Remove-Item Env:SIPA_RESET_MERCATINO
+   python cli.py db-version
+   python main.py
+   ```
+
+4. La revisione attesa è **`0007_mercatino_ristrutturazione`**. Conservare la copia di backup verificata, il manifesto JSON e la chiave audit, se presente. In PostgreSQL l'operazione deve essere coordinata da una sola postazione autorizzata.
+
+**Non usare il comando `upgrade-db` senza il consenso all'azzeramento** quando lo schema è ancora a `0006`: il sistema impedirà la migrazione e lascerà il database da aggiornare. Se l'aggiornamento si interrompe, non riavviare SIPA finché non è stata verificata la revisione e la consistenza del database.
+
+## Gestione delle bozze di rilevazione
+
+- **Rileva presenze → Salva bozza:** conserva la rilevazione non ancora confermata. La bozza non alimenta gli accertamenti o i prospetti annuali.
+- **Mercatino → Gestisci bozze:** apre l’elenco delle bozze, ordinato dalla data più recente; mostra data, luogo, giornata, operatore e riepilogo degli esiti provvisori.
+- **Apri:** riapre la bozza selezionata già impostando data e giornata, recuperando le caselle delle ditte presenti. È possibile modificare e salvare nuovamente la bozza oppure confermarla.
+- **Elimina:** richiede una conferma esplicita, cancella la bozza e i suoi esiti provvisori in una sola transazione, e registra l’operazione nell’audit. Non elimina assegnazioni o provvedimenti.
+- Le **rilevazioni confermate** non compaiono nella gestione bozze e non possono essere eliminate con questo comando. Per correggerle si usa la rilevazione con motivazione di rettifica.
+- **Nessuna migrazione Alembic necessaria:** vengono usate le tabelle già presenti nella revisione `0007_mercatino_ristrutturazione`.
+
+## Gestione luoghi, giornate e assegnazioni (aggiornamento interfaccia)
+
+- **Gestisci luoghi:** apre l'elenco dei luoghi con selezione di una riga e comandi **Nuovo**, **Salva** (inserimento/modifica), **Elimina selezionato** (doppia conferma), **Chiudi**. Non è possibile cancellare un luogo ancora collegato a una giornata.
+- **Gestisci giornate:** apre l'elenco delle coppie luogo/giorno, con modifica, inserimento ed eliminazione. Una giornata che ha già assegnazioni o rilevazioni non può essere modificata nel giorno/luogo né eliminata.
+- **Gestisci assegnazioni:** il pulsante nella riga della singola ditta apre un elenco delle sue assegnazioni. La selezione permette di correggere posteggio, ordine, giornata e validità oppure di eliminare l'assegnazione; è possibile anche aggiungerne altre. Le assegnazioni già collegate a provvedimenti o esiti di rilevazione non possono essere modificate o eliminate, per conservare lo storico.
+- Le cancellazioni sono protette da una seconda conferma e le operazioni sono registrate nell'audit.
+- Le nuove funzioni **non modificano la struttura del database**: chi è già alla revisione `0007_mercatino_ristrutturazione` deve solamente sostituire `main.py` e `mercatino.py`, senza eseguire migrazioni.
+
+## Nuovo flusso Mercatino
+
+- **Nuovo luogo:** registra una sede fisica con nome univoco.
+- **Nuova giornata:** associa a un luogo un giorno della settimana; uno stesso luogo può essere attivo più giorni.
+- **Nuova ditta:** anagrafica generale indipendente dai posteggi.
+- **Nuova assegnazione:** collega ditta e giornata, con posto, ordine di rilevazione e periodo di validità; non sovrapporre periodi della stessa ditta e giornata.
+- **Provvedimenti:** registra numero/data dell'atto, tipologia, periodo di efficacia e assegnazioni interessate; sospensione, revoca, decadenza e riattivazione. La prima versione blocca intervalli sovrapposti per evitare stati ambigui.
+- **Rileva presenze:** seleziona data e giornata, spunta i presenti. Gli esclusi per sospensione, cessazione e fuori validità sono mostrati separatamente. `Salva bozza` non produce accertamenti; `Conferma rilevazione` fissa gli esiti presenti/assenti. Una modifica a una rilevazione confermata richiede motivazione registrata nell'audit.
+- **Accertamento assenze per data / luogo:** stampa un PDF solo con gli esiti ASSENTE delle rilevazioni confermate, raggruppati per luogo.
+- **Prospetti annuali:** riepilogo per ditta e complessivo ricavati esclusivamente da rilevazioni confermate.
+
+L'elenco delle ditte mostra le assegnazioni nel formato `STRASATTI martedì (posto 34), STRASATTI domenica (posto 43), CENTRO venerdì (posto 9)`.
+
+**Nota operativa:** lo stato amministrativo è calcolato alla data della rilevazione. Gli esiti confermati conservano denominazione e posto. Non si deve considerare un PDF generato automaticamente come attestazione di circostanze ulteriori rispetto ai rilievi effettivamente registrati.
+
+---
+
 # SIPA — Sistema Informativo Polizia Amministrativa
 
-**Versione 0.57** · Applicazione desktop in Python per la gestione delle attività di polizia amministrativa.
+**Versione 0.58** · Applicazione desktop in Python per la gestione delle attività di polizia amministrativa.
 
 [Repository GitHub — bleish-git/sipa](https://github.com/bleish-git/sipa) · **Licenza MIT**
 
@@ -82,7 +150,7 @@ Eseguire i comandi dalla directory SIPA, con l'ambiente virtuale attivo e, per l
 
 ### Aggiornamenti dello schema con Alembic
 
-La revisione attualmente prevista dal programma è **`0004_mercatino`**. I file delle migrazioni sono conservati in `migrations/versions/` e **devono accompagnare il codice** nelle installazioni e negli aggiornamenti.
+La revisione attualmente prevista dal programma è **`0005_presenze_ordine`**. I file delle migrazioni sono conservati in `migrations/versions/` e **devono accompagnare il codice** nelle installazioni e negli aggiornamenti.
 
 ```bash
 python cli.py db-version
@@ -225,3 +293,22 @@ La ricerca OR si attiva quando **l'intera stringa, senza spazi iniziali/finali**
 ### Note di sicurezza e funzionamento
 
 Il Mercatino conserva le assenze come date e non come celle fisse del calendario; il prospetto viene generato dai dati registrati nell'anno. Non sono previsti cancellazioni automatiche o modifiche allo schema durante il normale avvio. Le prove delle migrazioni e delle stampe vanno ripetute sul sistema operativo di destinazione prima dell'utilizzo su dati operativi.
+
+
+## SIPA 0.58 — Rilevazione presenze Mercatino
+
+La revisione richiesta è **`0005_presenze_ordine`**. Con SIPA chiuso su tutte le postazioni, sostituire i file della patch ed eseguire:
+
+```bash
+python cli.py upgrade-db --backup-dir ~/BackupSIPA
+python cli.py db-version
+python main.py
+```
+
+La migrazione aggiunge il campo numerico **Ordine rilevazione** (predefinito 0, per le ditte già registrate) e la tabella `mercatino_rilevazioni`, che tiene traccia delle giornate e dei luoghi per i quali il controllo presenze è stato salvato. Non elimina le assenze esistenti.
+
+Nella scheda della ditta si imposta **Ordine rilevazione**, intero da 0 a 999999, indipendente dal numero posto. Il comando **Registra / annulla presenze** nel menu Mercatino apre una maschera con **data** e **luogo**, quindi visualizza soltanto le ditte **attive** di quel luogo, ordinate per tale campo, numero posto e denominazione. Spuntare **le ditte presenti**; quelle non spuntate vengono registrate assenti quando si sceglie **Salva e chiudi**. **Annulla** chiude senza modifiche.
+
+Una data/luogo già salvata può essere riaperta: le caselle vengono ricostruite dalle assenze registrate e il nuovo salvataggio aggiunge o annulla le assenze per differenza. Ogni rilevazione usa una transazione unica e registra un evento nell'audit. La tabella delle rilevazioni distingue una giornata già verificata con tutti presenti da una giornata mai verificata. Le assenze pregresse rimangono conservate.
+
+**Avvertenza:** quando una giornata non è stata ancora rilevata le caselle partono tutte vuote. Verificare le spunte prima del salvataggio; se nessuna è selezionata, il programma registrerà tutte le ditte attive del luogo come assenti. Se una ditta cambia stato o luogo durante la compilazione, SIPA richiede di ricaricare l'elenco prima di salvare.

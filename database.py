@@ -43,16 +43,68 @@ class MercatinoDitta(Base):
     __tablename__ = 'mercatino_ditte'
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     denominazione: Mapped[str] = mapped_column(String(200), nullable=False, index=True)
-    numero_posto: Mapped[str] = mapped_column(String(30), nullable=False)
-    luogo: Mapped[str] = mapped_column(String(150), nullable=False, index=True)
     stato: Mapped[str] = mapped_column(String(15), nullable=False, default='Attivo')
+    note: Mapped[str] = mapped_column(Text, nullable=False, default='')
 
-class MercatinoAssenza(Base):
-    __tablename__ = 'mercatino_assenze'
+class MercatinoLuogo(Base):
+    __tablename__ = 'mercatino_luoghi'
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    ditta_id: Mapped[int] = mapped_column(Integer, ForeignKey('mercatino_ditte.id', ondelete='CASCADE'), nullable=False, index=True)
-    giorno: Mapped[date] = mapped_column(Date, nullable=False, index=True)
-    __table_args__ = (UniqueConstraint('ditta_id', 'giorno', name='uq_mercatino_ditta_giorno'),)
+    nome: Mapped[str] = mapped_column(String(150), nullable=False, unique=True)
+    descrizione: Mapped[str] = mapped_column(Text, nullable=False, default='')
+
+class MercatinoGiornata(Base):
+    __tablename__ = 'mercatino_giornate'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    luogo_id: Mapped[int] = mapped_column(Integer, ForeignKey('mercatino_luoghi.id'), nullable=False, index=True)
+    giorno_settimana: Mapped[int] = mapped_column(Integer, nullable=False)
+    __table_args__ = (UniqueConstraint('luogo_id','giorno_settimana',name='uq_mercatino_giornata'),)
+
+class MercatinoAssegnazione(Base):
+    __tablename__ = 'mercatino_assegnazioni'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ditta_id: Mapped[int] = mapped_column(Integer, ForeignKey('mercatino_ditte.id'), nullable=False, index=True)
+    giornata_id: Mapped[int] = mapped_column(Integer, ForeignKey('mercatino_giornate.id'), nullable=False, index=True)
+    posto: Mapped[str] = mapped_column(String(30), nullable=False)
+    ordine: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    valida_dal: Mapped[date | None] = mapped_column(Date, nullable=True)
+    valida_al: Mapped[date | None] = mapped_column(Date, nullable=True)
+
+class MercatinoProvvedimento(Base):
+    __tablename__ = 'mercatino_provvedimenti'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    tipo: Mapped[str] = mapped_column(String(20), nullable=False)
+    numero_atto: Mapped[str] = mapped_column(String(100), nullable=False)
+    data_atto: Mapped[date] = mapped_column(Date, nullable=False)
+    efficace_dal: Mapped[date] = mapped_column(Date, nullable=False)
+    efficace_al: Mapped[date | None] = mapped_column(Date, nullable=True)
+    motivazione: Mapped[str] = mapped_column(Text, nullable=False, default='')
+
+class MercatinoProvvedimentoAssegnazione(Base):
+    __tablename__ = 'mercatino_provvedimenti_assegnazioni'
+    provvedimento_id: Mapped[int] = mapped_column(Integer, ForeignKey('mercatino_provvedimenti.id'), primary_key=True)
+    assegnazione_id: Mapped[int] = mapped_column(Integer, ForeignKey('mercatino_assegnazioni.id'), primary_key=True)
+
+class MercatinoRilevazione(Base):
+    __tablename__ = 'mercatino_rilevazioni'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    giorno: Mapped[date] = mapped_column(Date, nullable=False)
+    giornata_id: Mapped[int] = mapped_column(Integer, ForeignKey('mercatino_giornate.id'), nullable=False)
+    stato: Mapped[str] = mapped_column(String(15), nullable=False, default='Bozza')
+    operatore: Mapped[str] = mapped_column(String(80), nullable=False)
+    confermata_il: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    note: Mapped[str] = mapped_column(Text, nullable=False, default='')
+    __table_args__ = (UniqueConstraint('giorno','giornata_id',name='uq_mercatino_rilevazione'),)
+
+class MercatinoEsito(Base):
+    __tablename__ = 'mercatino_esiti'
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    rilevazione_id: Mapped[int] = mapped_column(Integer, ForeignKey('mercatino_rilevazioni.id'), nullable=False, index=True)
+    assegnazione_id: Mapped[int] = mapped_column(Integer, ForeignKey('mercatino_assegnazioni.id'), nullable=False)
+    ditta_id: Mapped[int] = mapped_column(Integer, ForeignKey('mercatino_ditte.id'), nullable=False)
+    denominazione: Mapped[str] = mapped_column(String(200), nullable=False)
+    posto: Mapped[str] = mapped_column(String(30), nullable=False)
+    esito: Mapped[str] = mapped_column(String(30), nullable=False)
+    __table_args__ = (UniqueConstraint('rilevazione_id','assegnazione_id',name='uq_mercatino_esito'),)
 
 class AuditEvent(Base):
     __tablename__ = 'audit_events'
