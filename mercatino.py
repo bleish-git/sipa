@@ -417,3 +417,33 @@ def assenze_anno(uid,anno,ditta_id=None):
         if ditta_id is not None:q=q.where(Esito.ditta_id==int(ditta_id))
         return [dict(ditta_id=e.ditta_id,denominazione=e.denominazione,posto=e.posto,
                      luogo=l.nome,giorno=r.giorno) for e,r,g,l in s.execute(q.order_by(Rilevazione.giorno,Luogo.nome))]
+
+
+def importa_esiti_mobile(uid, username, payload):
+    """Importa SOLO una bozza da Android; rifiuta conflitti e confermate.
+
+    Confronta l'elenco esportato con le assegnazioni attualmente previste,
+    inclusi denominazione, posto e ordine. In presenza di modifiche richiede
+    una nuova esportazione dal PC.
+    """
+    from scambio_presenze import leggi_esiti, serialize
+    _check(uid, 'mercatino.absence')
+    item=leggi_esiti(serialize(payload))
+    elenco=item['elenco']
+    giorno=data_input(elenco['data'])
+    giornata_id=int(elenco['giornata_id'])
+    snapshot=anteprima(uid,giorno,giornata_id)
+    if snapshot['stato']=='Confermata':
+        raise ValueError('Rilevazione già confermata: importazione vietata.')
+    by_id=lambda rows:{int(d['assegnazione_id']):(
+        int(d['ditta_id']),str(d['denominazione']),str(d['posto']),int(d.get('ordine',0)))
+        for d in rows}
+    if by_id(snapshot['ditte'])!=by_id(elenco['ditte']):
+        raise ValueError('Elenco sul PC modificato rispetto all’esportazione: esportare nuovamente.')
+    # Eventuali bozze preesistenti vanno sostituite solo con la conferma dell'utente.
+    # Questo import sostituisce gli esiti della bozza corrente, non una confermata.
+    ids=set(by_id(snapshot['ditte']))
+    presenti=set(item['presenti'])
+    salva_rilevazione(uid,username,giorno,giornata_id,presenti,ids,conferma=False,
+                     note='Importazione da SIPA Presenze Android, elenco '+elenco['elenco_id'])
+    return len(presenti)

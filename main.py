@@ -365,6 +365,8 @@ def main(page: ft.Page):
              accertamenti, assenze_anno)
         from stampa_mercatino import (stampa_elenco,stampa_accertamento,
                                       stampa_assenze_ditta,stampa_assenze_generale)
+        from scambio_presenze import crea_elenco, leggi_esiti, serialize
+        from mercatino import importa_esiti_mobile
         uid=user['id']; username=user['username']
         can_edit=has_permission(uid,'mercatino.update'); can_create=has_permission(uid,'mercatino.create')
         can_presence=has_permission(uid,'mercatino.absence');can_print=has_permission(uid,'mercatino.export')
@@ -647,6 +649,23 @@ def main(page: ft.Page):
                         conferma=confirm,motivo=reason.value, note=notes.value)
                     page.pop_dialog();notify(f'Rilevazione {"confermata" if confirm else "salvata in bozza"}: {a} presenti, {b} assenti.')
                 except Exception as exc:status.value=str(exc);page.update()
+            async def esporta_elenco_mobile(ev):
+                try:
+                    snapshot=anteprima(uid,day.value,gd.value)
+                    if snapshot['stato']=='Confermata':
+                        raise ValueError('Non si può esportare una rilevazione confermata.')
+                    if not snapshot['ditte']:
+                        raise ValueError('Nessuna ditta da rilevare.')
+                    entry=next(x for x in sessions if x['id']==int(gd.value))
+                    payload=crea_elenco(data_input(day.value).isoformat(),int(gd.value),
+                                        entry['luogo'],entry['descrizione'],snapshot['ditte'])
+                    target=await ft.FilePicker().save_file(
+                        file_name=f"sipa_lista_{payload['data']}_{payload['elenco_id'][:8]}.json",
+                        file_type=ft.FilePickerFileType.CUSTOM,allowed_extensions=['json'],
+                        src_bytes=serialize(payload))
+                    if target:notify('Elenco esportato per SIPA Presenze Android.')
+                except Exception as exc:
+                    status.value='Errore esportazione: '+str(exc);page.update()
             day.on_change=load;gd.on_change=load;gd.on_select=load
             ricerca_ditta.on_change=filtra_ditte
             dlg=ft.AlertDialog(modal=True,title=ft.Text('Rilevazione presenze'),
@@ -657,11 +676,40 @@ def main(page: ft.Page):
                     ricerca_ditta,conteggio_ricerca,listbox,ft.Text('Escluse (sospese, cessate, fuori validità):'),excluded,notes,reason],
                     width=650,height=580,scroll=ft.ScrollMode.AUTO),
                 actions=[ft.TextButton('Annulla',on_click=lambda e:page.pop_dialog()),
+                    ft.OutlinedButton('Esporta elenco Android',on_click=esporta_elenco_mobile),
                     ft.OutlinedButton('Salva bozza',on_click=lambda e:save(False)),
                     ft.Button('Conferma rilevazione',on_click=lambda e:save(True))])
             page.show_dialog(dlg);load()
         def gestisci_bozze(e=None):
-            """Apri o elimina rilevazioni salvate ma non ancora confermate."""
+            """Apri, importa o elimina rilevazioni salvate ma non ancora confermate."""
+            async def importa_mobile(ev):
+                try:
+                    picked=await ft.FilePicker().pick_files(
+                        allow_multiple=False,with_data=True,
+                        file_type=ft.FilePickerFileType.CUSTOM,allowed_extensions=['json'])
+                    if not picked:return
+                    f=picked[0]
+                    raw=f.bytes if f.bytes else Path(f.path).read_bytes()
+                    imported=leggi_esiti(raw)
+                    elenco=imported['elenco']
+                    preview=ft.Text(
+                        f"{elenco['data']} — {elenco['giornata']}\n"
+                        f"Ditte: {len(elenco['ditte'])}, presenti: {len(imported['presenti'])}\n"
+                        'Verificare data e mercato. Verrà creata/aggiornata una BOZZA, mai confermata.')
+                    error=ft.Text(color=ft.Colors.RED_700)
+                    def confirm_import(ev):
+                        try:
+                            n=importa_esiti_mobile(uid,username,imported)
+                            page.pop_dialog()
+                            load()
+                            notify(f'Bozza importata: {n} presenze. Aprirla e verificare prima della conferma.')
+                        except Exception as exc:error.value=str(exc);page.update()
+                    dlg2=ft.AlertDialog(modal=True,title=ft.Text('Importa bozza da Android'),
+                        content=ft.Column([preview,error],tight=True,width=470),
+                        actions=[ft.TextButton('Annulla',on_click=lambda e:page.pop_dialog()),
+                                 ft.Button('Importa come bozza',on_click=confirm_import)])
+                    page.show_dialog(dlg2)
+                except Exception as exc:info.value='Importazione: '+str(exc);page.update()
             records=ft.Column(spacing=7)
             info=ft.Text(color=ft.Colors.RED_700)
             def load():
@@ -709,6 +757,7 @@ def main(page: ft.Page):
             dlg=ft.AlertDialog(modal=True,title=ft.Text('Gestione bozze delle rilevazioni'),
                 content=ft.Column([info,records],width=620,height=500,scroll=ft.ScrollMode.AUTO),
                 actions=[ft.TextButton('Chiudi',on_click=lambda e:page.pop_dialog()),
+                         ft.OutlinedButton('Importa bozza Android',on_click=importa_mobile,disabled=not can_presence),
                          ft.OutlinedButton('Aggiorna',on_click=lambda e:load())])
             page.show_dialog(dlg)
             load()

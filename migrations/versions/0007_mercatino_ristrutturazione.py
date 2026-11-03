@@ -1,7 +1,8 @@
 """Mercatino 0.60: azzeramento SOLO registro mercatino e nuovo modello storico.
 
-Requires environment variable SIPA_RESET_MERCATINO=CONFERMO_AZZERAMENTO.
-This migration MUST be run offline with all SIPA clients stopped after a verified backup.
+Requires explicit confirmation ONLY when the legacy Mercatino tables contain data.
+This migration MUST be run offline with all SIPA clients stopped.
+A new database has empty legacy tables and needs no destructive confirmation.
 """
 import os
 from alembic import op
@@ -13,8 +14,37 @@ branch_labels = None
 depends_on = None
 
 def upgrade():
-    if os.environ.get('SIPA_RESET_MERCATINO') != 'CONFERMO_AZZERAMENTO':
-        raise RuntimeError('Migrazione distruttiva Mercatino: impostare SIPA_RESET_MERCATINO=CONFERMO_AZZERAMENTO dopo backup verificato.')
+    # Even on a brand-new installation, revisions 0004-0006 create the old
+    # Mercatino tables. Requiring an explicit destructive confirmation when
+    # those tables are empty would incorrectly prevent initial setup.
+    bind = op.get_bind()
+    legacy_tables = (
+        'mercatino_assenze',
+        'mercatino_calendario',
+        'mercatino_rilevazioni',
+        'mercatino_ditte',
+    )
+    existing_tables = set(sa.inspect(bind).get_table_names())
+    missing = set(legacy_tables) - existing_tables
+    if missing:
+        raise RuntimeError(
+            'Schema Mercatino inatteso; tabelle mancanti: '
+            + ', '.join(sorted(missing))
+            + '. Migrazione interrotta senza cancellare dati.'
+        )
+
+    has_legacy_data = any(
+        bind.execute(sa.text(f'SELECT 1 FROM {name} LIMIT 1')).first() is not None
+        for name in legacy_tables
+    )
+    if (has_legacy_data and
+            os.environ.get('SIPA_RESET_MERCATINO') != 'CONFERMO_AZZERAMENTO'):
+        raise RuntimeError(
+            'Migrazione distruttiva Mercatino: sono presenti dati nel vecchio registro. '
+            'Dopo un backup verificato, impostare '
+            'SIPA_RESET_MERCATINO=CONFERMO_AZZERAMENTO.'
+        )
+
     # I dati degli altri moduli, utenti e audit restano intatti.
     for name in ('mercatino_assenze','mercatino_calendario','mercatino_rilevazioni','mercatino_ditte'):
         op.drop_table(name)
