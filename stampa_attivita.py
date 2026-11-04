@@ -12,7 +12,7 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 
 def stampa_pdf(records, ricerca='', filtro='Tutte', destinazione=None):
     stamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')
-    target = Path(destinazione).expanduser() if destinazione else Path.home() / 'SIPA_Stampe' / f'attivita_economiche_{stamp}.pdf'
+    target = Path(destinazione).expanduser() if destinazione else __import__('output_settings').export_path('attivita_economiche','pdf')
     target.parent.mkdir(parents=True, exist_ok=True)
     styles = getSampleStyleSheet()
     small = ParagraphStyle('cellula', parent=styles['BodyText'], fontName='Helvetica', fontSize=7.5, leading=10)

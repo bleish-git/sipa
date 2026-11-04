@@ -10,9 +10,8 @@ from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, 
 
 
 def _target(prefix):
-    path=Path.home()/'SIPA_Stampe'/f'{prefix}_{datetime.now():%Y%m%d_%H%M%S_%f}.pdf'
-    path.parent.mkdir(parents=True,exist_ok=True)
-    return path
+    from output_settings import export_path
+    return export_path(prefix,'pdf')
 
 
 def _doc(path,page=landscape(A4)):
