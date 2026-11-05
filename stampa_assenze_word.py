@@ -1,6 +1,7 @@
 """Esporta le assenze confermate in un documento Word basato sul modello dell'ufficio."""
 from datetime import date
 from pathlib import Path
+import re
 from docx import Document
 from docx.shared import Pt, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
@@ -28,6 +29,17 @@ def _bordi_tabella_neri(table):
         element.set(qn('w:sz'), '4')  # 4 ottavi di punto = 0,5 pt
         element.set(qn('w:color'), '000000')
 
+
+
+def _chiave_posto(entry):
+    """Ordine numerico naturale dei posti; valori non numerici in fondo."""
+    posto = str(entry.get('posto') or '').strip()
+    if not posto:
+        return (2, (), '')
+    parti = re.split(r'(\d+)', posto.casefold())
+    if posto.isdecimal():
+        return (0, (int(posto),), '')
+    return (1, tuple((0, int(p)) if p.isdigit() else (1, p) for p in parti), posto.casefold())
 
 
 def stampa_comunicazione_assenze(rows, giorno):
@@ -76,7 +88,7 @@ def stampa_comunicazione_assenze(rows, giorno):
         heading_run.bold=True
         heading_run.font.size=Pt(11)
         anchor.addprevious(head._p)
-        entries=list(item.get('assenti') or [])
+        entries=sorted(item.get('assenti') or [], key=_chiave_posto)
         if entries:
             table=document.add_table(rows=1, cols=2)
             # Il modello convertito da .doc non garantisce uno stile Table Grid.
