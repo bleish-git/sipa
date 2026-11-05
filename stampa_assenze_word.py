@@ -4,10 +4,30 @@ from pathlib import Path
 from docx import Document
 from docx.shared import Pt, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from output_settings import export_path
 
 TEMPLATE=Path(__file__).resolve().parent/'assets'/'Comunicazione_assenze_modello.docx'
 WEEK=['lunedì','martedì','mercoledì','giovedì','venerdì','sabato','domenica']
+
+
+def _bordi_tabella_neri(table):
+    """Bordi neri, continui, sottili (0,5 pt), interni ed esterni."""
+    tbl_pr = table._tbl.tblPr
+    borders = tbl_pr.find(qn('w:tblBorders'))
+    if borders is None:
+        borders = OxmlElement('w:tblBorders')
+        tbl_pr.append(borders)
+    for edge in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+        element = borders.find(qn('w:' + edge))
+        if element is None:
+            element = OxmlElement('w:' + edge)
+            borders.append(element)
+        element.set(qn('w:val'), 'single')
+        element.set(qn('w:sz'), '4')  # 4 ottavi di punto = 0,5 pt
+        element.set(qn('w:color'), '000000')
+
 
 
 def stampa_comunicazione_assenze(rows, giorno):
@@ -75,6 +95,7 @@ def stampa_comunicazione_assenze(rows, giorno):
                     for paragraph in cell.paragraphs:
                         for run in paragraph.runs:
                             run.font.size=Pt(11)
+            _bordi_tabella_neri(table)
             table.columns[0].width=Cm(12)
             table.columns[1].width=Cm(3)
             anchor.addprevious(table._tbl)
