@@ -12,7 +12,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from database import BASE_DIR, AuditEvent, engine, log
 
-KEY = BASE_DIR / '.sipa_audit_key'
+KEY = (Path(os.environ['SIPA_TARGET_AUDIT_KEY']).expanduser().resolve() if os.environ.get('SIPA_TARGET_AUDIT_KEY')
+       else (BASE_DIR / '.sipa_audit_key' if not os.environ.get('SIPA_TARGET_CONFIG') else BASE_DIR / '.sipa_external_no_key'))
 
 def verify_audit():
     if not KEY.exists():

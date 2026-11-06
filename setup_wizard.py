@@ -66,7 +66,15 @@ def inspect_existing(values, username, password, audit_key_path=None):
             if values['driver'] == 'postgresql':
                 conn.exec_driver_sql('SET TRANSACTION READ ONLY')
             names = set(sa_inspect(conn).get_table_names())
-            required = set(REQUIRED_COLUMNS) | {'alembic_version'}
+            # La revisione viene letta PRIMA delle colonne della versione attuale:
+            # un archivio vecchio è per definizione privo di alcune tabelle/colonne.
+            if not {'users', 'alembic_version', 'audit_events'}.issubset(names):
+                raise ValueError('Non sembra un database SIPA versionato valido.')
+            rev = conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one_or_none()
+            if rev != EXPECTED_REVISION:
+                raise ValueError(f'Revisione incompatibile: database {rev or "non versionato"}, SIPA richiede {EXPECTED_REVISION}. '
+                                 'Effettuare l’aggiornamento amministrativo sul server, non su questo client.')
+            required = set(REQUIRED_COLUMNS)
             missing = required - names
             if missing:
                 raise ValueError('Schema incompleto, mancano tabelle: ' + ', '.join(sorted(missing)))
@@ -74,10 +82,6 @@ def inspect_existing(values, username, password, audit_key_path=None):
                 columns = {x['name'] for x in sa_inspect(conn).get_columns(table)}
                 if needed - columns:
                     raise ValueError(f'Colonne mancanti in {table}: {sorted(needed - columns)}')
-            rev = conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one_or_none()
-            if rev != EXPECTED_REVISION:
-                raise ValueError(f'Revisione incompatibile: database {rev or "non versionato"}, SIPA richiede {EXPECTED_REVISION}. '
-                                 'Effettuare l’aggiornamento amministrativo sul server, non su questo client.')
             total = conn.execute(text('SELECT count(*) FROM users')).scalar_one()
             if total < 1:
                 raise ValueError('Database privo di utenti: collegamento annullato.')
@@ -123,7 +127,7 @@ def inspect_existing(values, username, password, audit_key_path=None):
         engine.dispose()
 
 
-def create_new(values, username, password):
+def create_new(values, username, password, *, allow_create_postgres=False):
     """Initialize empty database only; provision the first administrator."""
     if not username.strip() or len(username.strip()) > 80:
         raise ValueError('Nome amministratore non valido.')
@@ -137,13 +141,16 @@ def create_new(values, username, password):
         if not p.parent.is_dir():
             raise ValueError('La directory SQLite non esiste.')
     else:
-        test_connection(values)
-        engine = _engine(values)
-        try:
-            if inspect(engine).get_table_names():
-                raise ValueError('Il database PostgreSQL non è vuoto: usare “Collega esistente”.')
-        finally:
-            engine.dispose()
+        from pg_provision import check_database, create_database
+        status = check_database(values)
+        if not status['exists']:
+            if not status['can_create']:
+                raise PermissionError('Il database PostgreSQL non esiste e l’utente non ha CREATEDB. Contattare l’amministratore PostgreSQL.')
+            if not allow_create_postgres:
+                raise ValueError('Il database PostgreSQL non esiste. SIPA può crearlo, ma è necessaria una conferma esplicita.')
+            create_database(values)
+        else:
+            test_connection(values)
     if CONFIG.exists():
         raise ValueError('Configurazione già presente: procedura iniziale non consentita.')
     # The SQLAlchemy/Alembic modules create their engines at import time, so save config first.
@@ -170,11 +177,18 @@ def create_new(values, username, password):
         raise
 
 
-def setup(values, mode, username, password, audit_key_path=None):
+def setup(values, mode, username, password, audit_key_path=None, *, allow_create_postgres=False):
     if CONFIG.exists():
         raise ValueError('SIPA è già configurato; utilizzare le impostazioni in Amministrazione.')
     if mode == 'existing':
-        result = inspect_existing(values, username, password, audit_key_path)
+        try:
+            result = inspect_existing(values, username, password, audit_key_path)
+        except ValueError as exc:
+            from pending_upgrade import incompatible
+            explanation = incompatible(values, exc)
+            if explanation:
+                raise ValueError(explanation) from exc
+            raise
         key_source = result.pop('audit_key_source', None)
         target = Path(__file__).resolve().parent / '.sipa_audit_key'
         if key_source and Path(key_source).resolve() != target.resolve():
@@ -187,7 +201,7 @@ def setup(values, mode, username, password, audit_key_path=None):
         save_settings(values, initial=True)
         return result
     if mode == 'new':
-        return create_new(values, username, password)
+        return create_new(values, username, password, allow_create_postgres=allow_create_postgres)
     raise ValueError('Modalità non valida.')
 
 
@@ -216,7 +230,19 @@ def cli_setup():
             if value:
                 values[key] = value
     audit_file = input('Percorso chiave audit esistente (.sipa_audit_key), se necessaria [invio=cartella SIPA]: ').strip() if mode == '2' else None
-    result = setup(values, 'new' if mode == '1' else 'existing', username, password, audit_file)
+    allow_create = False
+    if mode == '1' and driver == 'postgresql':
+        from pg_provision import check_database
+        status = check_database(values)
+        if not status['exists']:
+            if not status['can_create']:
+                raise SystemExit('Database assente e privilegi CREATEDB insufficienti: contattare l’amministratore PostgreSQL.')
+            print(f"Il database {values['database']} NON esiste; SIPA può crearlo sul server {values['host']}.")
+            allow_create = input('Digitare CREA DATABASE per confermare: ').strip() == 'CREA DATABASE'
+            if not allow_create:
+                raise SystemExit('Creazione annullata.')
+    result = setup(values, 'new' if mode == '1' else 'existing', username, password, audit_file,
+                   allow_create_postgres=allow_create)
     print('Configurazione completata:', result)
 
 
@@ -259,6 +285,8 @@ def launch_gui():
             confirm.visible = mode.value == 'new'
             audit_path.visible = mode.value == 'existing'
             page.update()
+        pending_creation = {'identity': None}
+
         def proceed(e):
             msg.value = 'Verifica in corso...'
             page.update()
@@ -268,7 +296,27 @@ def launch_gui():
                 values = dict(DEFAULT, driver=driver.value, sqlite_path=path.value,
                               host=host.value, port=port.value, database=dbname.value,
                               username=dbuser.value, password_env=pwenv.value, sslmode=ssl.value)
-                result = setup(values, mode.value, username.value or '', password.value or '', audit_path.value or None)
+                identity = (values['driver'], values['host'], str(values['port']), values['database'], values['username'], values['sslmode'])
+                allow_create = False
+                if mode.value == 'new' and driver.value == 'postgresql':
+                    from pg_provision import check_database
+                    status = check_database(values)
+                    if not status['exists']:
+                        if not status['can_create']:
+                            raise PermissionError('Il database non esiste e l’utente non dispone di CREATEDB. Contattare l’amministratore PostgreSQL.')
+                        if pending_creation['identity'] != identity:
+                            pending_creation['identity'] = identity
+                            msg.color = ft.Colors.ORANGE_800
+                            msg.value = (f"ATTENZIONE: il database '{values['database']}' non esiste sul server '{values['host']}'. "
+                                         'L’utente dispone di CREATEDB. Premere nuovamente il pulsante per AUTORIZZARE la creazione, '
+                                         'seguita dall’inizializzazione dello schema.')
+                            page.update()
+                            return
+                        allow_create = True
+                    else:
+                        pending_creation['identity'] = None
+                result = setup(values, mode.value, username.value or '', password.value or '',
+                               audit_path.value or None, allow_create_postgres=allow_create)
                 msg.color = ft.Colors.GREEN_700
                 msg.value = f'Configurazione completata. Revisione: {result["revision"]}; utenti: {result["users"]}. Chiudere questa finestra e riavviare SIPA.'
                 submit.disabled = True

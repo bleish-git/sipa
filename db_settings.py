@@ -31,7 +31,13 @@ def _normalized(raw):
 
 
 def read_settings():
-    source = CONFIG if CONFIG.is_file() else LEGACY
+    override = os.environ.get('SIPA_TARGET_CONFIG')
+    if override:
+        source = Path(override).expanduser().resolve()
+        if not source.is_file():
+            raise FileNotFoundError('Configurazione di destinazione non trovata: ' + str(source))
+    else:
+        source = CONFIG if CONFIG.is_file() else LEGACY
     if not source.is_file():
         return DEFAULT.copy()
     data = json.loads(source.read_text(encoding='utf-8'))

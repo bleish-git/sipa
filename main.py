@@ -1075,6 +1075,7 @@ def main(page: ft.Page):
             # Le celle non applicabili rimangono vuote.
             areas = [
                 ('Dashboard', 'dashboard'),
+                ('Mercatino', 'mercatino'),
                 ('Attività economiche', 'attivita'),
                 ('Verbali amministrativi', 'verbali'),
                 ('Accertamenti', 'accertamenti'),
@@ -1087,7 +1088,7 @@ def main(page: ft.Page):
             actions = [
                 ('read', 'Consulta'), ('view', 'Visualizza'),
                 ('create', 'Inserisci'), ('update', 'Modifica'),
-                ('void', 'Annulla'), ('export', 'Esporta'),
+                ('void', 'Annulla'), ('absence', 'Presenze'), ('export', 'Esporta'),
                 ('manage', 'Gestisci'),
             ]
             message = ft.Text(color=ft.Colors.RED_700)
@@ -1309,7 +1310,7 @@ def main(page: ft.Page):
                     page.update()
             dlg = ft.AlertDialog(modal=True, title=ft.Text('Configurazione database'),
                 content=ft.Column([kind, fields,admin_user,admin_password,audit_source,msg,
-                    ft.Text('Verifica obbligatoria: connessione, tabelle, colonne, revisione ESATTA, utenti, credenziali e catena audit. Il database di destinazione non viene alterato. Si salva solo la configurazione locale; riavviare SIPA.', size=12)],
+                    ft.Text('Verifica obbligatoria della revisione. Se lo schema è precedente, viene mostrato il comando di upgrade offline per la destinazione selezionata, senza modificare la configurazione attiva. Il database non viene alterato. Riavviare SIPA dopo un collegamento riuscito.', size=12)],
                     width=580, tight=True, scroll=ft.ScrollMode.AUTO),
                 actions=[ft.TextButton('Annulla', on_click=lambda e: page.pop_dialog()),
                          ft.Button('Salva configurazione', on_click=save)])

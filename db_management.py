@@ -16,7 +16,14 @@ def connect_existing(values, username, password, audit_key_path=None):
     Il file di configurazione/chiave viene aggiornato solo dopo tutte le verifiche;
     in caso di errore prova a riportare in uso quelli precedenti.
     """
-    result = inspect_existing(values, username, password, audit_key_path)
+    try:
+        result = inspect_existing(values, username, password, audit_key_path)
+    except ValueError as exc:
+        from pending_upgrade import incompatible
+        explanation = incompatible(values, exc)
+        if explanation:
+            raise ValueError(explanation) from exc
+        raise
     original = read_settings()
     if values['driver'] != original['driver']:
         raise ValueError('Per cambiare motore usa la procedura iniziale offline in una nuova installazione; non è una migrazione dei dati.')

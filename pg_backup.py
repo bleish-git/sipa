@@ -12,7 +12,9 @@ from database import engine
 from db_settings import read_settings
 from schema import check_current, revision, HEAD
 
-KEY = Path(__file__).resolve().parent / '.sipa_audit_key'
+KEY = (Path(os.environ['SIPA_TARGET_AUDIT_KEY']).expanduser().resolve() if os.environ.get('SIPA_TARGET_AUDIT_KEY')
+       else (Path(__file__).resolve().parent / '.sipa_audit_key' if not os.environ.get('SIPA_TARGET_CONFIG')
+             else Path(__file__).resolve().parent / '.sipa_external_no_key'))
 
 
 def _sha(path):
