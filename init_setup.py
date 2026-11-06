@@ -18,7 +18,7 @@ def init_admin():
     if driver == 'sqlite':
         values['sqlite_path'] = input(f"Percorso SQLite [{current['sqlite_path']}]: ").strip() or current['sqlite_path']
     else:
-        for key, title in [('host','Host'),('port','Porta'),('database','Database'),('username','Utente'),('password_env','Variabile ambiente password'),('sslmode','TLS (require/verify-ca/verify-full)')]:
+        for key, title in [('host','Host'),('port','Porta'),('database','Database'),('username','Utente'),('password_env','Variabile ambiente password'),('sslmode','TLS (disable/allow/prefer/require/verify-ca/verify-full)')]:
             values[key] = input(f'{title} [{current[key]}]: ').strip() or current[key]
         print(f"La password viene letta dalla variabile {values['password_env']} (non salvata su disco).")
     print('Verifica configurazione e connessione...')

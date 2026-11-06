@@ -211,7 +211,7 @@ def cli_setup():
         values['sqlite_path'] = input(f"Percorso DB SQLite [{values['sqlite_path']}]: ").strip() or values['sqlite_path']
     else:
         for key, label in [('host','Host'),('port','Porta'),('database','Database'),('username','Utente PostgreSQL'),
-                           ('password_env','Variabile ambiente password'),('sslmode','TLS')]:
+                           ('password_env','Variabile ambiente password'),('sslmode','TLS (disable/allow/prefer/require/verify-ca/verify-full)')]:
             value = input(f'{label} [{values[key]}]: ').strip()
             if value:
                 values[key] = value
@@ -245,11 +245,12 @@ def launch_gui():
         dbname = ft.TextField(label='Nome database', value=DEFAULT['database'], width=220)
         dbuser = ft.TextField(label='Utente PostgreSQL', value=DEFAULT['username'], width=220)
         pwenv = ft.TextField(label='Variabile ambiente password PostgreSQL', value=DEFAULT['password_env'], width=380)
-        ssl = ft.Dropdown(label='TLS', value='require', options=[ft.dropdown.Option(x) for x in ('require', 'verify-ca','verify-full')], width=200)
+        ssl = ft.Dropdown(label='TLS / SSL', value='require', options=[ft.dropdown.Option(x) for x in ('disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full')], width=210)
+        ssl_warning = ft.Text('ATTENZIONE: disable disattiva la cifratura del collegamento; allow/prefer possono usare connessioni non cifrate. Usare soltanto su una rete isolata e autorizzata.', color=ft.Colors.ORANGE_800, size=12)
         warning = ft.Text(WARNING, color=ft.Colors.ORANGE_800, size=12)
         postgres_info = ft.Text('Configurare prima la variabile ambiente della password PostgreSQL sul PC.', size=12)
         pgcontrols = ft.Column([ft.Row([host, port, dbname], wrap=True),
-                                ft.Row([dbuser, pwenv, ssl], wrap=True), postgres_info])
+                                ft.Row([dbuser, pwenv, ssl], wrap=True), ssl_warning, postgres_info])
         audit_path = ft.TextField(label='Chiave audit originale (.sipa_audit_key): percorso facoltativo', width=650)
         msg = ft.Text(color=ft.Colors.RED_700, selectable=True)
         def change(e=None):

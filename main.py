@@ -1282,7 +1282,7 @@ def main(page: ft.Page):
             dbname = ft.TextField(label='Nome database', value=c.get('database', 'sipa'))
             dbuser = ft.TextField(label='Utente PostgreSQL', value=c.get('username', 'sipa'))
             envname = ft.TextField(label='Variabile ambiente della password', value=c.get('password_env', 'SIPA_PG_PASSWORD'))
-            ssl = ft.Dropdown(label='Sicurezza TLS', value=c.get('sslmode', 'require'), options=[ft.dropdown.Option(x) for x in ('require', 'verify-ca', 'verify-full')])
+            ssl = ft.Dropdown(label='Sicurezza TLS', value=c.get('sslmode', 'require'), options=[ft.dropdown.Option(x) for x in ('disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full')])
             info = ft.Text('La password non viene salvata: impostare la variabile ambiente prima di avviare SIPA.', size=12)
             admin_user = ft.TextField(label='Amministratore del database di destinazione')
             admin_password = ft.TextField(label='Password amministratore del database di destinazione', password=True, can_reveal_password=True)

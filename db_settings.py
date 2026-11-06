@@ -66,7 +66,7 @@ def validate(values):
         env = str(values.get('password_env') or '').strip()
         if not env.isidentifier():
             raise ValueError('Nome variabile ambiente password non valido')
-        if values.get('sslmode') not in ('require', 'verify-ca', 'verify-full'):
+        if values.get('sslmode') not in ('disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full'):
             raise ValueError('Modalità TLS non valida')
 
 
