@@ -15,7 +15,6 @@ if __name__ == '__main__':
 
 import json
 import traceback
-from datetime import datetime
 from pathlib import Path
 from db_settings import read_settings
 import flet as ft
@@ -41,10 +40,6 @@ SECTIONS = [
 def main(page: ft.Page):
     page.title = 'SIPA - Sistema Informativo Polizia Amministrativa'
     page.theme_mode = ft.ThemeMode.LIGHT
-    page.locale_configuration = ft.LocaleConfiguration(
-        supported_locales=[ft.Locale('it', 'IT')],
-        current_locale=ft.Locale('it', 'IT'),
-    )
     page.padding = 0
     page.window.width = 1160
     page.window.height = 760
@@ -56,68 +51,6 @@ def main(page: ft.Page):
         pass
     user = None
     selected_section = 0
-
-    def campo_data(label, valore='', width=None, read_only=False):
-        """Campo GG/MM/AAAA con calendario Flet e callback di aggiornamento.
-
-        Mantiene un TextField autentico, così i salvataggi e i filtri già presenti
-        continuano a utilizzare .value, .on_change e .on_blur senza adattamenti.
-        """
-        field = ft.TextField(
-            label=label,
-            value=str(valore or ''),
-            width=width,
-            read_only=read_only,
-        )
-
-        def apri_calendario(e=None):
-            try:
-                iniziale = datetime.strptime((field.value or '').strip(), '%d/%m/%Y')
-            except (TypeError, ValueError):
-                iniziale = datetime.now()
-
-            def data_scelta(event):
-                scelta = event.control.value
-                if scelta is None:
-                    return
-                # Flet può restituire la mezzanotte italiana come istante UTC
-                # del giorno precedente. Convertire prima al fuso locale evita
-                # lo slittamento senza alterare le date scelte dall'utente.
-                if isinstance(scelta, str):
-                    scelta = datetime.fromisoformat(scelta.replace('Z', '+00:00'))
-                if scelta.tzinfo is not None:
-                    scelta = scelta.astimezone()
-                field.value = scelta.strftime('%d/%m/%Y')
-                field.error = None
-                # Attiva gli stessi ricalcoli previsti quando l'utente digita.
-                handler = field.on_change
-                if handler is not None:
-                    handler(event)
-                page.update()
-
-            picker = ft.DatePicker(
-                value=iniziale.replace(hour=12, minute=0, second=0, microsecond=0),
-                first_date=datetime(1900, 1, 1),
-                last_date=datetime(2100, 12, 31),
-                locale=ft.Locale('it', 'IT'),
-                help_text='Seleziona data',
-                field_hint_text='GG/MM/AAAA',
-                field_label_text='Data',
-                error_format_text='Formato non valido',
-                error_invalid_text='Data fuori intervallo',
-                confirm_text='Conferma',
-                cancel_text='Annulla',
-                on_change=data_scelta,
-            )
-            page.show_dialog(picker)
-
-        if not read_only:
-            field.suffix = ft.IconButton(
-                icon=ft.Icons.CALENDAR_MONTH,
-                tooltip='Scegli data dal calendario',
-                on_click=apri_calendario,
-            )
-        return field
 
     def logo(width=250):
         return ft.Image(src='logo-sipa.png', width=width, fit=ft.BoxFit.CONTAIN)
@@ -289,8 +222,9 @@ def main(page: ft.Page):
             nonlocal displayed_records
             term = (search.value or '').strip()
             if term and len(term) < 3:
-                # Ricerca ancora incompleta: non cancellare l'ultimo elenco valido.
-                counter.value = 'Ricerca incompleta: inserisci almeno 3 caratteri oppure svuota il campo.'
+                results.controls = []
+                displayed_records = []
+                counter.value = 'Inserisci almeno 3 caratteri per avviare la ricerca.'
                 if not initial:
                     page.update()
                 return
@@ -316,13 +250,130 @@ def main(page: ft.Page):
                         ])))
                 if not data:
                     results.controls.append(ft.Text('Nessuna attività corrispondente ai criteri selezionati.'))
-            except (ValueError, TypeError) as exc:
-                counter.value = 'Filtro non valido: ' + str(exc)
             except Exception as exc:
                 traceback.print_exc()
-                counter.value = 'Impossibile aggiornare l’elenco: ' + str(exc)
+                counter.value = 'Errore caricamento elenco: ' + f'{type(exc).__name__}: {exc}'
+                displayed_records = []
+                results.controls = [ft.Text(counter.value, color=ft.Colors.RED_700, selectable=True)]
             if not initial:
                 page.update()
+
+        def manage_tipologie(e=None):
+            if not can_update:
+                notify('Modifica tipologie non autorizzata.', True)
+                return
+            from attivita import elenco_tipologie, salva_tipologia, elimina_tipologia
+
+            # Non usare expand=True per i TextField multilinea in una Row wrap:
+            # alcune versioni Flet non ne calcolano correttamente le dimensioni.
+            nome = ft.TextField(label='Denominazione tipologia *', width=680)
+            descrizione = ft.TextField(label='Descrizione', width=680,
+                                       multiline=True, min_lines=2, max_lines=4)
+            avviso = ft.Text(value='Seleziona una tipologia da modificare oppure premi Nuova.',
+                              color=ft.Colors.BLUE_GREY_700, selectable=True)
+            contatore = ft.Text(size=12, color=ft.Colors.GREY_700)
+            elenco_controlli = ft.Column(spacing=6)
+            corrente = {'nome': None}
+
+            def scegli(record):
+                corrente['nome'] = record['nome']
+                nome.value = record['nome']
+                descrizione.value = record['descrizione'] or ''
+                avviso.value = f"Modifica tipologia: {record['nome']}"
+                avviso.color = ft.Colors.BLUE_700
+                page.update()
+
+            def aggiorna():
+                righe = elenco_tipologie(user['id'])
+                contatore.value = f'Tipologie registrate: {len(righe)}'
+                elenco_controlli.controls.clear()
+                if not righe:
+                    elenco_controlli.controls.append(ft.Text('Nessuna tipologia registrata.'))
+                for r in righe:
+                    elenco_controlli.controls.append(ft.Container(
+                        padding=10, border_radius=6, bgcolor=ft.Colors.BLUE_GREY_50,
+                        content=ft.Row([
+                            ft.Column([
+                                ft.Text(r['nome'], weight=ft.FontWeight.BOLD),
+                                ft.Text(r['descrizione'] or 'Nessuna descrizione', size=11),
+                            ], expand=True, spacing=3),
+                            ft.IconButton(icon=ft.Icons.EDIT, tooltip='Modifica',
+                                          on_click=lambda e, record=r: scegli(record)),
+                            ft.IconButton(icon=ft.Icons.DELETE_OUTLINE, tooltip='Elimina',
+                                          disabled=r['nome'] == 'Non specificata',
+                                          on_click=lambda e, record=r: conferma_elimina(record)),
+                        ])))
+
+            def nuovo(e):
+                corrente['nome'] = None
+                nome.value = ''
+                descrizione.value = ''
+                avviso.value = 'Nuova tipologia: inserisci denominazione e descrizione.'
+                avviso.color = ft.Colors.BLUE_700
+                page.update()
+
+            def salva_tipo(e):
+                try:
+                    salva_tipologia(user['id'], user['username'], nome.value,
+                                   descrizione.value, corrente['nome'])
+                    corrente['nome'] = (nome.value or '').strip()
+                    avviso.value = 'Tipologia salvata correttamente.'
+                    avviso.color = ft.Colors.GREEN_700
+                    aggiorna()
+                    page.update()
+                except Exception as exc:
+                    avviso.value = str(exc)
+                    avviso.color = ft.Colors.RED_700
+                    page.update()
+
+            def conferma_elimina(record):
+                def elimina(e):
+                    page.pop_dialog()
+                    try:
+                        elimina_tipologia(user['id'], user['username'], record['nome'])
+                        if corrente['nome'] == record['nome']:
+                            corrente['nome'] = None
+                            nome.value = ''
+                            descrizione.value = ''
+                        avviso.value = 'Tipologia eliminata.'
+                        avviso.color = ft.Colors.GREEN_700
+                        aggiorna()
+                        page.update()
+                    except Exception as exc:
+                        avviso.value = str(exc)
+                        avviso.color = ft.Colors.RED_700
+                        page.update()
+                page.show_dialog(ft.AlertDialog(
+                    modal=True, title=ft.Text('Eliminare la tipologia?'),
+                    content=ft.Text('Eliminare "' + record['nome'] + '"? '
+                                    'Se è utilizzata da attività economiche, '
+                                    'la cancellazione sarà impedita.'),
+                    actions=[ft.TextButton('Annulla', on_click=lambda e: page.pop_dialog()),
+                             ft.Button('Elimina', on_click=elimina)]))
+
+            aggiorna()
+            # Il corpo scorre nel suo insieme; i tre pulsanti sono invece nella
+            # barra fissa delle azioni del dialogo, sempre raggiungibile.
+            dlg = ft.AlertDialog(
+                modal=True,
+                title=ft.Text('Gestione tipologie attività'),
+                content=ft.Container(
+                    width=700, height=480,
+                    content=ft.Column([
+                        ft.Text('Denominazione e descrizione della tipologia.'),
+                        nome,
+                        descrizione,
+                        avviso,
+                        ft.Divider(),
+                        contatore,
+                        elenco_controlli,
+                    ], scroll=ft.ScrollMode.AUTO, spacing=12)),
+                actions=[
+                    ft.OutlinedButton('Nuova', icon=ft.Icons.ADD, on_click=nuovo),
+                    ft.Button('Salva tipologia', icon=ft.Icons.SAVE, on_click=salva_tipo),
+                    ft.TextButton('Chiudi', on_click=lambda e: (page.pop_dialog(), refresh())),
+                ])
+            page.show_dialog(dlg)
 
         def open_detail(item_id=None):
             if item_id is None and not can_create:
@@ -333,46 +384,104 @@ def main(page: ft.Page):
             except (ValueError, PermissionError) as exc:
                 notify(str(exc), True)
                 return
+            from attivita import elenco_tipologie
+            from datetime import datetime
             editable = can_update if item_id is not None else can_create
+
             def field(key, label, multiline=False):
-                if key.startswith('data_'):
-                    return campo_data(label, item.get(key, '') or '', read_only=not editable)
-                return ft.TextField(label=label, value=((item.get(key, '') or '').upper() if key == 'nome' else (item.get(key, '') or '')),
+                return ft.TextField(
+                    label=label,
+                    value=((item.get(key, '') or '').upper() if key == 'nome' else (item.get(key, '') or '')),
                     read_only=not editable, multiline=multiline,
-                    min_lines=2 if multiline else 1, max_lines=4 if multiline else 1)
-            fields = {key: field(key, label, multiline) for key, label, multiline in [
-                ('nome', 'Nome attività *', False),
-                ('titolare', 'Titolare', False),
-                ('pec', 'PEC', False),
+                    min_lines=2 if multiline else 1, max_lines=4 if multiline else 1,
+                    expand=not multiline,
+                )
+
+            fields = {key: field(key, label, multi) for key, label, multi in [
+                ('numero_fascicolo', 'Numero fascicolo', False),
+                ('nome', 'Nome attività *', False), ('titolare', 'Titolare', False),
+                ('pec', 'PEC', False), ('indirizzo', 'Indirizzo', False),
                 ('descrizione', 'Descrizione', True),
-                ('note', 'Note', True),
                 ('data_inizio', 'Data inizio (GG/MM/AAAA)', False),
+                ('protocollo_inizio', 'Protocollo comunicazione di inizio', False),
+                ('riscontro_inizio', 'Note di riscontro inizio', True),
                 ('data_cessazione', 'Data cessazione (GG/MM/AAAA)', False),
+                ('protocollo_cessazione', 'Protocollo comunicazione cessazione', False),
+                ('riscontro_cessazione', 'Note di riscontro cessazione', True),
                 ('data_sospensione_inizio', 'Inizio sospensione (GG/MM/AAAA)', False),
                 ('data_sospensione_fine', 'Fine sospensione (GG/MM/AAAA)', False),
+                ('note_provvedimenti', 'Note provvedimenti', True),
+                ('altri_dati', 'Altri dati', True), ('note', 'Note', True),
             ]}
+            catalogo = elenco_tipologie(user['id'])
+            tipo_attuale = item.get('tipologia') or 'Non specificata'
             fields['tipologia'] = ft.Dropdown(
-                label='Tipologia', value=item.get('tipologia') or 'Non specificata',
-                options=[ft.dropdown.Option(v) for v in TIPOLOGIE], disabled=not editable)
+                label='Tipologia', value=tipo_attuale,
+                options=[ft.dropdown.Option(r['nome']) for r in catalogo],
+                disabled=not editable, expand=True)
+
+            def data_con_calendario(key):
+                text_field = fields[key]
+                if not editable:
+                    return
+                def apri(e):
+                    try:
+                        corrente = datetime.strptime(text_field.value, '%d/%m/%Y')
+                    except (ValueError, TypeError):
+                        corrente = datetime.now()
+                    def selezionata(event):
+                        scelta = event.control.value
+                        if scelta:
+                            text_field.value = scelta.strftime('%d/%m/%Y')
+                            page.update()
+                    picker = ft.DatePicker(value=corrente,
+                        first_date=datetime(1900, 1, 1), last_date=datetime(2100, 12, 31),
+                        help_text='Seleziona data', confirm_text='Conferma',
+                        cancel_text='Annulla', on_change=selezionata)
+                    page.show_dialog(picker)
+                text_field.suffix = ft.IconButton(icon=ft.Icons.CALENDAR_MONTH,
+                    tooltip='Seleziona la data', on_click=apri)
+
+            for key in ('data_inizio', 'data_cessazione', 'data_sospensione_inizio', 'data_sospensione_fine'):
+                data_con_calendario(key)
+
+            def gruppo(titolo, keys, descrizione=None):
+                controls = [ft.Text(titolo, weight=ft.FontWeight.BOLD, size=15), ft.Divider(height=2)]
+                if descrizione:
+                    controls.append(ft.Text(descrizione, size=11, color=ft.Colors.GREY_700))
+                # Layout a capo automatico per le diverse larghezze della finestra.
+                cols = []
+                for key in keys:
+                    control = fields[key]
+                    wide = key in ('descrizione', 'note', 'note_provvedimenti', 'altri_dati',
+                                   'riscontro_inizio', 'riscontro_cessazione')
+                    cols.append(ft.Container(content=control, col={'sm': 12, 'md': 12 if wide else 6, 'lg': 12 if wide else 4}))
+                controls.append(ft.ResponsiveRow(cols, spacing=10, run_spacing=10))
+                return ft.Container(padding=12, border_radius=8,
+                    bgcolor=ft.Colors.BLUE_GREY_50, content=ft.Column(controls, spacing=9))
+
             error = ft.Text(color=ft.Colors.RED_700)
-            detail_controls = list(fields.values())
+            detail_controls = []
             if item_id is not None:
-                stato_colori = {
-                    'Attiva': ft.Colors.GREEN_700,
-                    'Da iniziare': ft.Colors.ORANGE_700,
-                    'Sospesa': ft.Colors.AMBER_800,
-                    'Cessata': ft.Colors.RED_700,
-                }
-                detail_controls.insert(0, ft.Text(
-                    'Stato attuale: ' + item['stato'],
+                stato_colori = {'Attiva': ft.Colors.GREEN_700, 'Da iniziare': ft.Colors.ORANGE_700,
+                                'Sospesa': ft.Colors.AMBER_800, 'Cessata': ft.Colors.RED_700}
+                detail_controls.append(ft.Text('Stato attuale: ' + item['stato'],
                     weight=ft.FontWeight.BOLD,
-                    color=stato_colori.get(item['stato'], ft.Colors.GREY_700),
-                ))
-            detail_controls.append(error)
+                    color=stato_colori.get(item['stato'], ft.Colors.GREY_700)))
+            detail_controls.extend([
+                gruppo('Dati iniziali', ['numero_fascicolo', 'tipologia']),
+                gruppo('Anagrafica attività', ['nome', 'titolare', 'pec', 'indirizzo', 'descrizione']),
+                gruppo('Inizio attività', ['data_inizio', 'protocollo_inizio', 'riscontro_inizio']),
+                gruppo('Cessazione', ['data_cessazione', 'protocollo_cessazione', 'riscontro_cessazione']),
+                gruppo('Provvedimenti', ['data_sospensione_inizio', 'data_sospensione_fine', 'note_provvedimenti']),
+                gruppo('Altri dati', ['altri_dati', 'note']), error,
+            ])
             dlg = ft.AlertDialog(modal=True,
                 title=ft.Text('Nuova attività economica' if item_id is None else 'Dettaglio attività economica'),
-                content=ft.Column(detail_controls, tight=True, width=580, height=530,
-                                  scroll=ft.ScrollMode.AUTO), actions=[])
+                content=ft.Container(width=850, height=560,
+                    content=ft.Column(detail_controls, expand=True, scroll=ft.ScrollMode.AUTO)),
+                actions=[])
+
             def save(e):
                 try:
                     values = {key: control.value for key, control in fields.items()}
@@ -411,6 +520,8 @@ def main(page: ft.Page):
                    ft.OutlinedButton('Stampa elenco PDF', icon=ft.Icons.PRINT, on_click=stampa_elenco)]
         if can_create:
             buttons.append(ft.Button('Nuova attività', icon=ft.Icons.ADD, on_click=lambda e: open_detail()))
+        if can_update:
+            buttons.append(ft.OutlinedButton('Gestisci tipologie', icon=ft.Icons.CATEGORY, on_click=manage_tipologie))
         content.controls.extend([
             ft.Text('Registro attività economiche', size=17, weight=ft.FontWeight.W_600),
             ft.Row([search, status], wrap=True, spacing=12),
@@ -438,25 +549,7 @@ def main(page: ft.Page):
         uid=user['id']; username=user['username']
         can_edit=has_permission(uid,'mercatino.update'); can_create=has_permission(uid,'mercatino.create')
         can_presence=has_permission(uid,'mercatino.absence');can_print=has_permission(uid,'mercatino.export')
-        # Le date vengono digitate un carattere alla volta: non propagare
-        # eccezioni dai callback dinamici durante l'immissione incompleta.
-        def week(raw):
-            try:
-                return GIORNI[data_input(raw).weekday()] if (raw or '').strip() else ''
-            except (ValueError, TypeError, AttributeError):
-                return ''
-
-        def valida_data_in_linea(raw, testo_errore, *, segnalazione=False):
-            """Valida senza interrompere i callback Flet; ritorna la data o None."""
-            try:
-                parsed = data_input(raw)
-            except (ValueError, TypeError, AttributeError):
-                testo_errore.value = 'Data non valida: usare GG/MM/AAAA (es. 04/11/2026).'
-                if segnalazione:
-                    notify(testo_errore.value, True)
-                return None
-            testo_errore.value = ''
-            return parsed
+        week=lambda raw: GIORNI[data_input(raw).weekday()] if raw else ''
         today=date.today().strftime('%d/%m/%Y')
         search=ft.TextField(label='Cerca ditta (almeno 3 caratteri)',width=340,prefix_icon=ft.Icons.SEARCH)
         state=ft.Dropdown(label='Stato',value='Tutti',width=150,
@@ -471,7 +564,8 @@ def main(page: ft.Page):
             return ft.Dropdown(label=label,value=str(value) if value is not None else None,width=width,
                 options=[ft.dropdown.Option(key=str(key),text=str(text)) for key,text in options])
         def date_field(label,initial=today):
-            return campo_data(label+' (GG/MM/AAAA)',initial,width=230)
+            field=textinput(label+' (GG/MM/AAAA)',initial,220)
+            return field
         def dialog(title,controls,on_save=None,button='Salva',width=570,height=450):
             error=ft.Text(color=ft.Colors.RED_700)
             actions=[ft.TextButton('Annulla',on_click=lambda e:page.pop_dialog())]
@@ -700,34 +794,13 @@ def main(page: ft.Page):
                 elif len(termine)>=3 and not visibili:
                     listbox.controls.append(ft.Text('Nessuna ditta corrisponde alla ricerca.'))
                 page.update()
-            date_warning=ft.Text(color=ft.Colors.RED_700, size=12)
             def load(ev=None):
-                # Prima di aggiornare l'elenco controlla i campi. In caso di
-                # data parziale mantiene intatte le caselle e le spunte.
-                parsed=valida_data_in_linea(day.value,date_warning)
-                w.value=week(day.value)
-                if parsed is None:
-                    page.update()
-                    return
-                try:
-                    if gd.value is None:
-                        raise ValueError('Selezionare una giornata di mercato.')
-                    snapshot=anteprima(uid,day.value,gd.value)
-                except (ValueError, TypeError) as exc:
-                    date_warning.value=str(exc)
-                    status.value='Verifica data e luogo prima di proseguire.'
-                    page.update()
-                    return
-                except Exception as exc:
-                    traceback.print_exc()
-                    date_warning.value='Impossibile aggiornare la rilevazione: '+str(exc)
-                    page.update()
-                    return
-                date_warning.value=''
                 checks.clear();righe_ditte.clear();listbox.controls.clear();excluded.controls.clear();current['key']=None
                 try:
+                    w.value=week(day.value)
+                    snapshot=anteprima(uid,day.value,gd.value)
                     current['ids']={d['assegnazione_id'] for d in snapshot['ditte']}
-                    current['key']=(parsed,int(gd.value))
+                    current['key']=(data_input(day.value),int(gd.value))
                     current['state']=snapshot['stato']
                     for d in sorted(snapshot['ditte'], key=lambda x:(x.get('ordine',0),str(x.get('posto','')),x['denominazione'])):
                         c=ft.Checkbox(label=f"{d['denominazione']} — posto {d['posto']}",
@@ -740,13 +813,9 @@ def main(page: ft.Page):
                     status.value=f"{snapshot['stato']} — {len(checks)} ditte da rilevare; {len(snapshot['esclusi'])} escluse"
                     filtra_ditte()
                 except Exception as exc:
-                    traceback.print_exc()
-                    status.value='Impossibile mostrare l’elenco: '+str(exc)
+                    status.value=str(exc)
                     current['ids']=set()
                 page.update()
-            def avvisa_data_presenze(e=None):
-                if valida_data_in_linea(day.value,date_warning,segnalazione=True) is None:
-                    page.update()
             def toggle(value):
                 for c in checks.values():c.value=value
                 page.update()
@@ -757,33 +826,7 @@ def main(page: ft.Page):
                     present={aid for aid,c in checks.items() if c.value}
                     a,b=salva_rilevazione(uid,username,day.value,gd.value,present,current['ids'],
                         conferma=confirm,motivo=reason.value, note=notes.value)
-                    # La maschera di rilevazione viene chiusa solo dopo il salvataggio riuscito.
-                    page.pop_dialog()
-                    if confirm:
-                        giornata=next((x for x in sessions if x['id']==int(gd.value)),None)
-                        luogo=(giornata['descrizione'] if giornata else str(gd.value))
-                        giorno=data_input(day.value)
-                        riepilogo=ft.AlertDialog(
-                            modal=True,
-                            title=ft.Text('Rilevazione confermata'),
-                            content=ft.Column([
-                                ft.Text('Rilevazione salvata definitivamente.',
-                                        color=ft.Colors.GREEN_700,weight=ft.FontWeight.BOLD),
-                                ft.Text(f'Data: {giorno.strftime("%d/%m/%Y")} — {week(day.value)}'),
-                                ft.Text(f'Luogo e giornata: {luogo}'),
-                                ft.Divider(),
-                                ft.Text(f'Ditte presenti: {a}',weight=ft.FontWeight.BOLD,
-                                        color=ft.Colors.GREEN_700),
-                                ft.Text(f'Ditte assenti: {b}',weight=ft.FontWeight.BOLD,
-                                        color=ft.Colors.RED_700),
-                                ft.Text(f'Totale ditte rilevate: {a+b}',
-                                        weight=ft.FontWeight.BOLD),
-                            ],tight=True,width=440),
-                            actions=[ft.Button('OK',on_click=lambda e:page.pop_dialog())],
-                        )
-                        page.show_dialog(riepilogo)
-                    else:
-                        notify(f'Rilevazione salvata in bozza: {a} presenti, {b} assenti.')
+                    page.pop_dialog();notify(f'Rilevazione {"confermata" if confirm else "salvata in bozza"}: {a} presenti, {b} assenti.')
                 except Exception as exc:status.value=str(exc);page.update()
             async def esporta_elenco_mobile(ev):
                 try:
@@ -802,11 +845,10 @@ def main(page: ft.Page):
                     if target:notify('Elenco esportato per SIPA Presenze Android.')
                 except Exception as exc:
                     status.value='Errore esportazione: '+str(exc);page.update()
-            day.on_change=load;day.on_blur=avvisa_data_presenze
-            gd.on_change=load;gd.on_select=load
+            day.on_change=load;gd.on_change=load;gd.on_select=load
             ricerca_ditta.on_change=filtra_ditte
             dlg=ft.AlertDialog(modal=True,title=ft.Text('Rilevazione presenze'),
-                content=ft.Column([ft.Row([day,gd],wrap=True),w,date_warning,status,
+                content=ft.Column([ft.Row([day,gd],wrap=True),w,status,
                     ft.Row([ft.TextButton('Tutte presenti',on_click=lambda e:toggle(True)),
                             ft.TextButton('Nessuna presente',on_click=lambda e:toggle(False))]),
                     ft.Text('Spuntare le ditte PRESENTI; le altre risulteranno ASSENTI dopo conferma.'),
@@ -908,46 +950,15 @@ def main(page: ft.Page):
             day=date_field('Data accertamento');w=ft.Text(week(day.value))
             places=m_luoghi(uid)
             place=dropdown('Luogo',[(0,'Tutti i luoghi')]+[(p['id'],p['nome']) for p in places],0,440)
-            error=ft.Text(color=ft.Colors.RED_700)
-            date_warning=ft.Text(color=ft.Colors.RED_700,size=12)
-            def update_day(e=None):
-                w.value=week(day.value)
-                valida_data_in_linea(day.value,date_warning)
-                page.update()
-            def warn_day(e=None):
-                if valida_data_in_linea(day.value,date_warning,segnalazione=True) is None:
-                    page.update()
-            day.on_change=update_day
-            day.on_blur=warn_day
-            def export(format):
-                try:
-                    dt=data_input(day.value)
-                    rows=accertamenti(uid,day.value,int(place.value or 0) or None)
-                    if format=='pdf':
-                        target=stampa_accertamento(rows,dt)
-                        message='Accertamento PDF: '
-                    else:
-                        from stampa_assenze_word import stampa_comunicazione_assenze
-                        target=stampa_comunicazione_assenze(rows,dt)
-                        message='Comunicazione Word: '
-                    page.pop_dialog()
-                    notify(message+str(target))
-                except Exception as exc:
-                    error.value=str(exc);page.update()
-            dlg=ft.AlertDialog(modal=True,title=ft.Text('Assenze per data e luogo'),
-                content=ft.Column([day,w,date_warning,place,error],width=550,height=250,scroll=ft.ScrollMode.AUTO),
-                actions=[ft.TextButton('Annulla',on_click=lambda e:page.pop_dialog()),
-                    ft.OutlinedButton('Esporta Word',icon=ft.Icons.DESCRIPTION,
-                        on_click=lambda e:export('word')),
-                    ft.Button('Stampa PDF',icon=ft.Icons.PRINT,
-                        on_click=lambda e:export('pdf'))])
-            page.show_dialog(dlg)
+            day.on_change=lambda e:(setattr(w,'value',week(day.value)),page.update())
+            def run():
+                rows=accertamenti(uid,day.value,int(place.value) or None)
+                path=stampa_accertamento(rows,data_input(day.value))
+                notify('Accertamento PDF: '+str(path))
+            dialog('Accertamento assenze per data e luogo',[day,w,place],run,button='Stampa PDF',height=250)
         def print_annual(pk=None):
             try:
-                raw_year=(year.value or '').strip()
-                if len(raw_year)!=4 or not raw_year.isdigit() or not 1900 <= int(raw_year) <= 2100:
-                    raise ValueError('Inserire un anno valido a quattro cifre (es. 2026).')
-                value=int(raw_year)
+                value=int(year.value)
                 if pk:
                     d=m_dettaglio(uid,pk);rows=assenze_anno(uid,value,pk)
                     path=stampa_assenze_ditta(d['denominazione'],value,rows)
@@ -969,8 +980,7 @@ def main(page: ft.Page):
             try:
                 q=(search.value or '').strip()
                 if q and len(q)<3:
-                    summary.value='Ricerca incompleta: inserire almeno 3 caratteri oppure svuotare il campo.'
-                    page.update();return
+                    result.controls.clear();summary.value='Inserire almeno 3 caratteri per cercare.';page.update();return
                 records=m_elenco(uid,q,selected_places or None,state.value)
                 summary.value=f'{len(records)} ditte trovate'
                 result.controls.clear()
@@ -991,11 +1001,7 @@ def main(page: ft.Page):
                             ft.Text(d['stato'],color=color,width=75),*buttons])))
                 if not records:result.controls.append(ft.Text('Nessuna ditta registrata o corrispondente ai filtri.'))
                 page.update()
-            except (ValueError, TypeError) as exc:
-                summary.value='Filtro non valido: '+str(exc);page.update()
-            except Exception as exc:
-                traceback.print_exc()
-                summary.value='Impossibile aggiornare l’elenco: '+str(exc);page.update()
+            except Exception as exc:summary.value='Errore: '+str(exc);page.update()
         search.on_change=refresh;state.on_change=refresh;state.on_select=refresh
         buttons=[ft.OutlinedButton('Luoghi (filtro)',on_click=select_places),
                  ft.OutlinedButton('Aggiorna',icon=ft.Icons.REFRESH,on_click=refresh)]
@@ -1075,7 +1081,6 @@ def main(page: ft.Page):
             # Le celle non applicabili rimangono vuote.
             areas = [
                 ('Dashboard', 'dashboard'),
-                ('Mercatino', 'mercatino'),
                 ('Attività economiche', 'attivita'),
                 ('Verbali amministrativi', 'verbali'),
                 ('Accertamenti', 'accertamenti'),
@@ -1088,7 +1093,7 @@ def main(page: ft.Page):
             actions = [
                 ('read', 'Consulta'), ('view', 'Visualizza'),
                 ('create', 'Inserisci'), ('update', 'Modifica'),
-                ('void', 'Annulla'), ('absence', 'Presenze'), ('export', 'Esporta'),
+                ('void', 'Annulla'), ('export', 'Esporta'),
                 ('manage', 'Gestisci'),
             ]
             message = ft.Text(color=ft.Colors.RED_700)
@@ -1170,40 +1175,6 @@ def main(page: ft.Page):
             load()
             page.show_dialog(dlg)
 
-        def export_directory_dialog(e=None):
-            """Imposta la directory comune per stampe PDF e documenti Word."""
-            from output_settings import get_output_directory, set_output_directory
-            directory = ft.TextField(label='Cartella predefinita per PDF e documenti',
-                                     value=str(get_output_directory()), width=490)
-            error = ft.Text(color=ft.Colors.RED_700)
-            async def browse(e):
-                try:
-                    selected = await ft.FilePicker().get_directory_path(
-                        dialog_title='Seleziona cartella esportazioni SIPA')
-                    if selected:
-                        directory.value = str(selected)
-                        page.update()
-                except Exception as exc:
-                    error.value = 'Selezione cartella non riuscita: ' + str(exc)
-                    page.update()
-            def save(e):
-                try:
-                    target = set_output_directory(directory.value)
-                    page.pop_dialog()
-                    notify('Cartella esportazioni impostata: ' + str(target))
-                except Exception as exc:
-                    error.value = str(exc)
-                    page.update()
-            dlg = ft.AlertDialog(modal=True, title=ft.Text('Destinazione stampe ed esportazioni'),
-                content=ft.Column([
-                    ft.Text('La cartella è utilizzata per PDF e documenti Word. Impostazione locale del PC; non modifica il database.', size=12),
-                    ft.Row([directory, ft.IconButton(icon=ft.Icons.FOLDER_OPEN,
-                            tooltip='Sfoglia cartelle', on_click=browse)]),error],
-                    tight=True,width=590),
-                actions=[ft.TextButton('Annulla',on_click=lambda e:page.pop_dialog()),
-                         ft.Button('Salva percorso',on_click=save)])
-            page.show_dialog(dlg)
-
         # FilePicker desktop (Flet 0.80+): UI operations only; restore must be done offline.
         def backup_dialog(e=None):
             directory = ft.TextField(label='Cartella di destinazione', value=str(Path.home() / 'BackupSIPA'), width=500)
@@ -1283,7 +1254,7 @@ def main(page: ft.Page):
             dbname = ft.TextField(label='Nome database', value=c.get('database', 'sipa'))
             dbuser = ft.TextField(label='Utente PostgreSQL', value=c.get('username', 'sipa'))
             envname = ft.TextField(label='Variabile ambiente della password', value=c.get('password_env', 'SIPA_PG_PASSWORD'))
-            ssl = ft.Dropdown(label='Sicurezza TLS', value=c.get('sslmode', 'require'), options=[ft.dropdown.Option(x) for x in ('disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full')])
+            ssl = ft.Dropdown(label='Sicurezza TLS', value=c.get('sslmode', 'require'), options=[ft.dropdown.Option(x) for x in ('require', 'verify-ca', 'verify-full')])
             info = ft.Text('La password non viene salvata: impostare la variabile ambiente prima di avviare SIPA.', size=12)
             admin_user = ft.TextField(label='Amministratore del database di destinazione')
             admin_password = ft.TextField(label='Password amministratore del database di destinazione', password=True, can_reveal_password=True)
@@ -1310,7 +1281,7 @@ def main(page: ft.Page):
                     page.update()
             dlg = ft.AlertDialog(modal=True, title=ft.Text('Configurazione database'),
                 content=ft.Column([kind, fields,admin_user,admin_password,audit_source,msg,
-                    ft.Text('Verifica obbligatoria della revisione. Se lo schema è precedente, viene mostrato il comando di upgrade offline per la destinazione selezionata, senza modificare la configurazione attiva. Il database non viene alterato. Riavviare SIPA dopo un collegamento riuscito.', size=12)],
+                    ft.Text('Verifica obbligatoria: connessione, tabelle, colonne, revisione ESATTA, utenti, credenziali e catena audit. Il database di destinazione non viene alterato. Si salva solo la configurazione locale; riavviare SIPA.', size=12)],
                     width=580, tight=True, scroll=ft.ScrollMode.AUTO),
                 actions=[ft.TextButton('Annulla', on_click=lambda e: page.pop_dialog()),
                          ft.Button('Salva configurazione', on_click=save)])
@@ -1347,8 +1318,6 @@ def main(page: ft.Page):
                 ft.Text(f'Revisione database: {revision() or "non versionato"} • Revisione applicazione: {HEAD}', size=12),
                 ft.Row([ft.OutlinedButton('Configura database', icon=ft.Icons.STORAGE, on_click=database_dialog),
                         ft.Button('Aggiorna schema (con backup)', icon=ft.Icons.SYSTEM_UPDATE_ALT, on_click=upgrade_dialog)], wrap=True),
-                ft.Divider(),ft.Text('Documenti e stampe',size=20,weight=ft.FontWeight.BOLD),
-                ft.OutlinedButton('Configura cartella stampe / esportazioni', icon=ft.Icons.FOLDER_OPEN, on_click=export_directory_dialog),
                 ft.Divider(),ft.Text('Backup e ripristino',size=20,weight=ft.FontWeight.BOLD),
                 ft.Row([
                     ft.Button('Genera backup',icon=ft.Icons.BACKUP,on_click=backup_dialog),

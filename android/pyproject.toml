@@ -1,6 +1,6 @@
 [project]
 name = "sipa-presenze"
-version = "0.1.0"
+version = "0.1.1"
 description = "Modulo Android offline per la rilevazione presenze del Mercatino SIPA"
 requires-python = ">=3.11"
 dependencies = ["flet>=0.80,<1"]
@@ -15,3 +15,10 @@ path = "src"
 
 [tool.flet.android]
 package = "it.bleish.sipapresenze"
+
+[tool.flet.splash]
+color = "#FFFFFF"
+dark_color = "#FFFFFF"
+
+[tool.flet.flutter.pubspec.dependency_overrides]
+jni = "^1.1.0"

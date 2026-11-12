@@ -23,7 +23,10 @@ from alembic.script import ScriptDirectory
 EXPECTED_REVISION = ScriptDirectory.from_config(Config(str(Path(__file__).resolve().parent / 'alembic.ini'))).get_current_head()
 REQUIRED_COLUMNS = {
     'users': {'id','username','salt','password_hash','role','active','must_change_password','failed_attempts','locked_until'},
-    'attivita_economiche': {'id','nome','titolare','pec','descrizione','note','data_inizio','data_cessazione'},
+    'attivita_economiche': {'id','nome','numero_fascicolo','tipologia','titolare','pec','indirizzo','descrizione',
+                            'note','data_inizio','protocollo_inizio','note_riscontro_inizio',
+                            'data_cessazione','protocollo_cessazione','note_riscontro_cessazione',
+                            'data_sospensione_inizio','data_sospensione_fine'},
     'audit_events': {'id','created_at','actor','action','target','details','previous_hash','entry_hash'},
     'permissions': {'code','description'},
     'role_permissions': {'role','permission_code'},

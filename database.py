@@ -38,6 +38,19 @@ class AttivitaEconomica(Base):
     data_sospensione_inizio: Mapped[date | None] = mapped_column(Date, nullable=True)
     data_sospensione_fine: Mapped[date | None] = mapped_column(Date, nullable=True)
     tipologia: Mapped[str] = mapped_column(String(80), nullable=False, default='Non specificata')
+    numero_fascicolo: Mapped[str] = mapped_column(String(60), nullable=False, default='')
+    indirizzo: Mapped[str] = mapped_column(String(300), nullable=False, default='')
+    protocollo_inizio: Mapped[str] = mapped_column(String(120), nullable=False, default='')
+    riscontro_inizio: Mapped[str] = mapped_column(Text, nullable=False, default='')
+    protocollo_cessazione: Mapped[str] = mapped_column(String(120), nullable=False, default='')
+    riscontro_cessazione: Mapped[str] = mapped_column(Text, nullable=False, default='')
+    note_provvedimenti: Mapped[str] = mapped_column(Text, nullable=False, default='')
+    altri_dati: Mapped[str] = mapped_column(Text, nullable=False, default='')
+
+class AttivitaTipologia(Base):
+    __tablename__ = 'attivita_tipologie'
+    nome: Mapped[str] = mapped_column(String(80), primary_key=True)
+    descrizione: Mapped[str] = mapped_column(Text, nullable=False, default='')
 
 class MercatinoDitta(Base):
     __tablename__ = 'mercatino_ditte'

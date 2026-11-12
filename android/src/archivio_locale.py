@@ -6,8 +6,17 @@ from scambio_presenze import leggi_elenco, serialize
 
 
 def _folder():
-    # Su Android la home Python deve appartenere allo spazio privato dell'app.
-    base = Path.home() / '.sipa_presenze'
+    # Flet >= 0.86 espone la cartella persistente e privata dell'app.
+    # Path.home() su Android puo' risolversi a /data (non scrivibile).
+    storage = os.environ.get('FLET_APP_STORAGE_DATA')
+    if storage:
+        base = Path(storage) / 'sipa_presenze'
+    else:
+        # In esecuzione Python locale (fuori da Flet) mantieni la home utente.
+        # Su Android non usare mai /data o altri percorsi globali.
+        if os.environ.get('ANDROID_ARGUMENT') or os.environ.get('ANDROID_ROOT'):
+            raise RuntimeError('Percorso dati Flet non disponibile su Android.')
+        base = Path.home() / '.sipa_presenze'
     base.mkdir(parents=True, exist_ok=True)
     return base
 

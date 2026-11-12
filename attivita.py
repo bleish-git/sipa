@@ -1,12 +1,74 @@
 """Gestione attività economiche; stato calcolato, mai memorizzato."""
 from datetime import date, datetime
-from sqlalchemy import select, or_, func
+from sqlalchemy import select, or_, func, delete
 from sqlalchemy.orm import Session
-from database import engine, AttivitaEconomica, log
+from database import engine, AttivitaEconomica, AttivitaTipologia, log
 from security import has_permission
 
 TIPOLOGIE = ('Non specificata', 'Commercio', 'Somministrazione', 'Artigianato', 'Servizi', 'Altro')
 STATI = ('Tutte', 'Attiva', 'Da iniziare', 'Sospesa', 'Cessata')
+
+
+def elenco_tipologie(user_id):
+    if not has_permission(user_id, 'attivita.read'):
+        raise PermissionError('Non autorizzato alla consultazione delle tipologie.')
+    with Session(engine) as session:
+        return [{'nome': item.nome, 'descrizione': item.descrizione}
+                for item in session.scalars(select(AttivitaTipologia).order_by(AttivitaTipologia.nome)).all()]
+
+
+def salva_tipologia(user_id, username, nome, descrizione, nome_originale=None):
+    if not has_permission(user_id, 'attivita.update'):
+        raise PermissionError('Permesso di modifica attività necessario.')
+    nome = (nome or '').strip()
+    descrizione = (descrizione or '').strip()
+    if not nome or len(nome) > 80:
+        raise ValueError('Nome tipologia obbligatorio (massimo 80 caratteri).')
+    if len(descrizione) > 2000:
+        raise ValueError('Descrizione troppo lunga (massimo 2000 caratteri).')
+    with Session(engine) as session:
+        if nome_originale:
+            item = session.get(AttivitaTipologia, nome_originale)
+            if item is None:
+                raise ValueError('Tipologia non trovata.')
+            if nome != nome_originale:
+                if session.get(AttivitaTipologia, nome) is not None:
+                    raise ValueError('Esiste già una tipologia con questo nome.')
+                # Aggiornamento atomico dei riferimenti esistenti (nessun record perso).
+                for att in session.scalars(select(AttivitaEconomica).where(AttivitaEconomica.tipologia == nome_originale)):
+                    att.tipologia = nome
+                session.delete(item)
+                session.flush()
+                session.add(AttivitaTipologia(nome=nome, descrizione=descrizione))
+            else:
+                item.descrizione = descrizione
+            action = 'attivita.tipologia.update'
+        else:
+            if session.get(AttivitaTipologia, nome) is not None:
+                raise ValueError('Tipologia già esistente.')
+            session.add(AttivitaTipologia(nome=nome, descrizione=descrizione))
+            action = 'attivita.tipologia.create'
+        log(session, username, action, nome, f'Tipologia {nome}'[:300])
+        session.commit()
+
+
+def elimina_tipologia(user_id, username, nome):
+    if not has_permission(user_id, 'attivita.update'):
+        raise PermissionError('Permesso di modifica attività necessario.')
+    if nome == 'Non specificata':
+        raise ValueError('La tipologia predefinita non può essere eliminata.')
+    with Session(engine) as session:
+        item = session.get(AttivitaTipologia, nome)
+        if item is None:
+            raise ValueError('Tipologia non trovata.')
+        # Blocco in presenza di collegamenti: SERIALIZABLE/lock applicativo per
+        # multiutente richiederebbe un FK; la migrazione mantiene compatibilità.
+        count = session.scalar(select(func.count()).select_from(AttivitaEconomica).where(AttivitaEconomica.tipologia == nome))
+        if count:
+            raise ValueError(f'Tipologia associata a {count} attività: cancellazione non consentita.')
+        session.delete(item)
+        log(session, username, 'attivita.tipologia.delete', nome, f'Tipologia {nome}'[:300])
+        session.commit()
 
 
 def stato(item, oggi=None):
@@ -30,6 +92,10 @@ def _record(item):
     return dict(id=item.id, nome=(item.nome or '').upper(), titolare=item.titolare,
                 tipologia=item.tipologia or 'Non specificata', pec=item.pec,
                 descrizione=item.descrizione, note=item.note,
+                numero_fascicolo=item.numero_fascicolo, indirizzo=item.indirizzo,
+                protocollo_inizio=item.protocollo_inizio, riscontro_inizio=item.riscontro_inizio,
+                protocollo_cessazione=item.protocollo_cessazione, riscontro_cessazione=item.riscontro_cessazione,
+                note_provvedimenti=item.note_provvedimenti, altri_dati=item.altri_dati,
                 data_inizio=_display_date(item.data_inizio),
                 data_cessazione=_display_date(item.data_cessazione),
                 data_sospensione_inizio=_display_date(item.data_sospensione_inizio),
@@ -100,15 +166,24 @@ def salva(user_id, username, values, item_id=None):
     if pause_start and pause_end and pause_end < pause_start:
         raise ValueError('La fine sospensione non può precedere l’inizio sospensione.')
     tipo = (values.get('tipologia') or 'Non specificata').strip()
-    if tipo not in TIPOLOGIE:
-        raise ValueError('Tipologia non valida.')
+    with Session(engine) as check_session:
+        if check_session.get(AttivitaTipologia, tipo) is None:
+            raise ValueError('Tipologia non presente nel catalogo.')
     fields = {'nome': nome, 'tipologia': tipo,
               'titolare': (values.get('titolare') or '').strip(),
               'pec': (values.get('pec') or '').strip(),
               'descrizione': (values.get('descrizione') or '').strip(),
               'note': (values.get('note') or '').strip(),
               'data_inizio': start, 'data_cessazione': end,
-              'data_sospensione_inizio': pause_start, 'data_sospensione_fine': pause_end}
+              'data_sospensione_inizio': pause_start, 'data_sospensione_fine': pause_end,
+              **{key: (values.get(key) or '').strip() for key in (
+                  'numero_fascicolo', 'indirizzo', 'protocollo_inizio', 'riscontro_inizio',
+                  'protocollo_cessazione', 'riscontro_cessazione', 'note_provvedimenti', 'altri_dati')}}
+    limits = {'numero_fascicolo': 60, 'indirizzo': 300, 'protocollo_inizio': 120,
+              'protocollo_cessazione': 120}
+    for key, limit in limits.items():
+        if len(fields[key]) > limit:
+            raise ValueError(f'{key}: massimo {limit} caratteri.')
     if len(fields['titolare']) > 200 or len(fields['pec']) > 254:
         raise ValueError('Titolare o PEC troppo lunghi.')
     with Session(engine) as session:
