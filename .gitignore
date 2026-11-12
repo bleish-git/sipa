@@ -8,3 +8,4 @@ env
 sipa_database.json
 *.dump
 BackupSIPA/
+sipa.db
