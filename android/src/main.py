@@ -1,10 +1,9 @@
 """SIPA Presenze: app Android/tablet offline con navigazione a viste."""
-import asyncio
 import flet as ft
 from scambio_presenze import crea_esiti, leggi_elenco, serialize
 import archivio_locale as archivio
 
-VERSIONE = "0.1.1"
+VERSIONE = "0.1.2"
 COPYRIGHT = "© 2026 bleish · Licenza MIT"
 
 
@@ -66,8 +65,40 @@ def main(page: ft.Page):
             controls=[contenuto(*controls, nota, expand=expand)],
         )
 
+    def accesso_view():
+        """Ingresso esplicito; in futuro qui verrà effettuato il login."""
+        contenuto_accesso = ft.Column(
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            alignment=ft.MainAxisAlignment.CENTER,
+            spacing=18,
+            controls=[
+                ft.Image(src="logo-sipa.png", width=290, height=160,
+                         fit=ft.BoxFit.CONTAIN),
+                ft.Text(f"Versione {VERSIONE}", size=14,
+                        color=ft.Colors.GREY_700),
+                ft.Text(COPYRIGHT, size=13, color=ft.Colors.GREY_700,
+                        text_align=ft.TextAlign.CENTER),
+                ft.Container(height=24),
+                ft.Button("Accedi", icon=ft.Icons.LOGIN, width=220,
+                          on_click=lambda e: entra_nel_programma()),
+            ],
+        )
+        return ft.View(
+            route="/", bgcolor=ft.Colors.WHITE, padding=0,
+            controls=[ft.SafeArea(expand=True, content=ft.Container(
+                expand=True, alignment=ft.Alignment.CENTER,
+                padding=ft.Padding.symmetric(horizontal=24, vertical=28),
+                content=contenuto_accesso,
+            ))],
+        )
+
+    def entra_nel_programma():
+        # Punto d'aggancio per la futura autenticazione: qui si validerà
+        # l'identità dell'utente prima di aprire il menu.
+        go("/menu")
+
     def home_view():
-        return make_view("/", "SIPA Presenze", [
+        return make_view("/menu", "SIPA Presenze", [
             ft.Image(src="logo-sipa.png", width=210, height=112, fit=ft.BoxFit.CONTAIN),
             ft.Text("Rilevazione offline delle presenze del Mercatino."),
             ft.Button("Rilevamento presenze", icon=ft.Icons.CHECKLIST,
@@ -83,7 +114,7 @@ def main(page: ft.Page):
             ft.Text(COPYRIGHT),
             ft.TextButton("Repository / Sviluppo: github.com/bleish-git/sipa",
                           on_click=lambda e: page.launch_url("https://github.com/bleish-git/sipa")),
-            ft.TextButton("Indietro", on_click=lambda e: go("/")),
+            ft.TextButton("Indietro", on_click=lambda e: go("/menu")),
         ])
 
     async def importa(e):
@@ -236,7 +267,7 @@ def main(page: ft.Page):
                 )
                 if path:
                     archivio.cancella()
-                    go("/")
+                    go("/menu")
                     notifica("Esiti esportati. La bozza locale è stata rimossa.")
                 else:
                     notifica("Esportazione annullata: la bozza è conservata.", True)
@@ -265,15 +296,16 @@ def main(page: ft.Page):
     def route_change(e=None):
         nonlocal messaggio_attivo
         route = page.route or "/"
-        routes = ["/", "/inizia", "/riepilogo", "/presenze"]
+        routes = ["/", "/menu", "/inizia", "/riepilogo", "/presenze"]
         if route == "/about":
-            page.views = [home_view(), about_view()]
+            page.views = [accesso_view(), home_view(), about_view()]
         elif route in routes:
             index = routes.index(route)
-            builders = [home_view, inizia_view, riepilogo_view, presenze_view]
+            builders = [accesso_view, home_view, inizia_view,
+                        riepilogo_view, presenze_view]
             page.views = [builders[i]() for i in range(index + 1)]
         else:
-            page.views = [home_view()]
+            page.views = [accesso_view()]
         messaggio_attivo = messaggi.get(route)
         page.update()
 
@@ -283,38 +315,16 @@ def main(page: ft.Page):
         if len(page.views) > 1:
             go(page.views[-2].route)
         else:
-            # In root si resta alla home: solo qui Android può chiudere l'app.
+            # Nella schermata di accesso non apriamo una route inesistente.
             go("/")
 
     page.on_route_change = route_change
     page.on_view_pop = view_pop
     route_change()
 
-    # Intro mostrata dopo che Flet è stato avviato, con versione e copyright.
-    async def intro():
-        splash = ft.View(
-            route="/splash",
-            bgcolor=ft.Colors.WHITE,
-            padding=0,
-            controls=[ft.SafeArea(expand=True, content=ft.Column(
-                expand=True,
-                alignment=ft.MainAxisAlignment.CENTER,
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                controls=[
-                    ft.Image(src="logo-sipa.png", width=260, height=150,
-                             fit=ft.BoxFit.CONTAIN),
-                    ft.Text("SIPA Presenze", size=25, weight=ft.FontWeight.BOLD),
-                    ft.Text(f"Versione {VERSIONE}"),
-                    ft.Text(COPYRIGHT, size=12, color=ft.Colors.GREY_700),
-                ],
-            ))],
-        )
-        page.views = [splash]
-        page.update()
-        await asyncio.sleep(1.5)
-        page.navigate("/")
-
-    page.run_task(intro)
+    # Niente passaggio automatico da / alla home: il pulsante Accedi
+    # rende la schermata iniziale utilizzabile anche con avvio lento
+    # o dopo il ritorno dell'app dal background.
 
 
 if __name__ == "__main__":
