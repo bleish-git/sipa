@@ -8,7 +8,7 @@ COPYRIGHT = "© 2026 bleish · Licenza MIT"
 
 
 def main(page: ft.Page):
-    page.title = "SIPA Presenze"
+    page.title = "SIPAdroid"
     page.theme_mode = ft.ThemeMode.LIGHT
     page.bgcolor = ft.Colors.GREY_50
     page.padding = 0
@@ -65,51 +65,54 @@ def main(page: ft.Page):
             controls=[contenuto(*controls, nota, expand=expand)],
         )
 
-    def accesso_view():
-        """Ingresso esplicito; in futuro qui verrà effettuato il login."""
-        contenuto_accesso = ft.Column(
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            alignment=ft.MainAxisAlignment.CENTER,
-            spacing=18,
-            controls=[
-                ft.Image(src="logo-sipa.png", width=290, height=160,
-                         fit=ft.BoxFit.CONTAIN),
-                ft.Text(f"Versione {VERSIONE}", size=14,
-                        color=ft.Colors.GREY_700),
-                ft.Text(COPYRIGHT, size=13, color=ft.Colors.GREY_700,
-                        text_align=ft.TextAlign.CENTER),
-                ft.Container(height=24),
-                ft.Button("Accedi", icon=ft.Icons.LOGIN, width=220,
-                          on_click=lambda e: entra_nel_programma()),
-            ],
-        )
-        return ft.View(
-            route="/", bgcolor=ft.Colors.WHITE, padding=0,
-            controls=[ft.SafeArea(expand=True, content=ft.Container(
-                expand=True, alignment=ft.Alignment.CENTER,
-                padding=ft.Padding.symmetric(horizontal=24, vertical=28),
-                content=contenuto_accesso,
-            ))],
-        )
-
-    def entra_nel_programma():
-        # Punto d'aggancio per la futura autenticazione: qui si validerà
-        # l'identità dell'utente prima di aprire il menu.
+    def accedi(e):
+        """Punto previsto per il futuro login: adesso accesso diretto al menu."""
         go("/menu")
 
+    def splash_view():
+        """Schermata iniziale: l'accesso al menu richiede un tocco su Accedi."""
+        return ft.View(
+            route="/",
+            bgcolor=ft.Colors.WHITE,
+            padding=0,
+            controls=[ft.SafeArea(
+                expand=True,
+                content=ft.Column(
+                    expand=True,
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=18,
+                    controls=[
+                        ft.Image(src="logo-sipa.png", width=300, height=175,
+                                 fit=ft.BoxFit.CONTAIN),
+                        ft.Text(f"SIPAdroid - Versione {VERSIONE}", color=ft.Colors.BLUE_GREY_700),
+                        ft.Text(COPYRIGHT, color=ft.Colors.BLUE_GREY_700,
+                                text_align=ft.TextAlign.CENTER, size=12),
+                        ft.TextButton("github.com/bleish-git/sipa",
+                                      on_click=lambda e: page.launch_url("https://github.com/bleish-git/sipa")),
+                        ft.Container(height=14),
+                        ft.Button("Accedi", icon=ft.Icons.LOGIN,
+                                  on_click=accedi, width=220, height=48),
+                    ],
+                ),
+            )],
+        )
+
     def home_view():
-        return make_view("/menu", "SIPA Presenze", [
-            ft.Image(src="logo-sipa.png", width=210, height=112, fit=ft.BoxFit.CONTAIN),
-            ft.Text("Rilevazione offline delle presenze del Mercatino."),
-            ft.Button("Rilevamento presenze", icon=ft.Icons.CHECKLIST,
+        """Menu modulare: altre funzioni potranno essere inserite qui."""
+        return make_view("/menu", "SIPAdroid", [
+            ft.Image(src="logo-sipa.png", width=190, height=100, fit=ft.BoxFit.CONTAIN),
+            ft.Text("Seleziona una funzione", size=19, weight=ft.FontWeight.BOLD),
+            ft.Button("Mercatino · Rilevazione presenze", icon=ft.Icons.CHECKLIST,
                       on_click=lambda e: go("/inizia")),
-            ft.OutlinedButton("About / Licenze", on_click=lambda e: go("/about")),
+            ft.OutlinedButton("Informazioni e licenza", icon=ft.Icons.INFO_OUTLINE,
+                              on_click=lambda e: go("/about")),
         ])
 
     def about_view():
         return make_view("/about", "Informazioni", [
             ft.Image(src="logo-sipa.png", width=210, height=110, fit=ft.BoxFit.CONTAIN),
-            ft.Text(f"SIPA Presenze — versione {VERSIONE}", weight=ft.FontWeight.BOLD),
+            ft.Text(f"SIPAdroid — versione {VERSIONE}", weight=ft.FontWeight.BOLD),
             ft.Text("Modulo mobile del progetto SIPA, sviluppato in Python con Flet."),
             ft.Text(COPYRIGHT),
             ft.TextButton("Repository / Sviluppo: github.com/bleish-git/sipa",
@@ -279,7 +282,8 @@ def main(page: ft.Page):
         # La lista occupa l'altezza residua e scorre al tocco senza altezza fissa.
         lista = ft.Container(
             content=rows, expand=True,
-            border=ft.border.all(1, ft.Colors.GREY_300),
+            # Flet 0.86.5 non espone ft.border.all: evitare l'API rimossa.
+            bgcolor=ft.Colors.GREY_100,
             border_radius=12,
             padding=8,
         )
@@ -298,33 +302,27 @@ def main(page: ft.Page):
         route = page.route or "/"
         routes = ["/", "/menu", "/inizia", "/riepilogo", "/presenze"]
         if route == "/about":
-            page.views = [accesso_view(), home_view(), about_view()]
+            page.views = [splash_view(), home_view(), about_view()]
         elif route in routes:
             index = routes.index(route)
-            builders = [accesso_view, home_view, inizia_view,
-                        riepilogo_view, presenze_view]
+            builders = [splash_view, home_view, inizia_view, riepilogo_view, presenze_view]
             page.views = [builders[i]() for i in range(index + 1)]
         else:
-            page.views = [accesso_view()]
+            page.views = [splash_view()]
         messaggio_attivo = messaggi.get(route)
         page.update()
 
     def view_pop(e):
-        # Android Back e navigazione gestuale tornano alla vista precedente.
-        # Le spunte sono già salvate su ogni modifica, senza bisogno di uscire.
+        # Android Back: torna alla vista precedente; sulla schermata iniziale
+        # non si chiude automaticamente l'app e rimane visibile Accedi.
         if len(page.views) > 1:
             go(page.views[-2].route)
         else:
-            # Nella schermata di accesso non apriamo una route inesistente.
             go("/")
 
     page.on_route_change = route_change
     page.on_view_pop = view_pop
     route_change()
-
-    # Niente passaggio automatico da / alla home: il pulsante Accedi
-    # rende la schermata iniziale utilizzabile anche con avvio lento
-    # o dopo il ritorno dell'app dal background.
 
 
 if __name__ == "__main__":

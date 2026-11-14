@@ -6,7 +6,7 @@ requires-python = ">=3.11"
 dependencies = ["flet>=0.80,<1"]
 
 [tool.flet]
-product = "SIPA Presenze"
+product = "SIPAdroid"
 org = "it.bleish"
 company = "bleish"
 
