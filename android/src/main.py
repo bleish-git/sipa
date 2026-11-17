@@ -1,6 +1,6 @@
 """SIPA Presenze: app Android/tablet offline con navigazione a viste."""
 import flet as ft
-from scambio_presenze import crea_esiti, leggi_elenco, serialize
+from scambio_presenze import crea_esiti, leggi_elenco, serialize, data_visibile, interpreta_data
 import archivio_locale as archivio
 
 VERSIONE = "0.1.2"
@@ -200,7 +200,7 @@ def main(page: ft.Page):
                 ft.Button("Importa elenco", on_click=lambda e: go("/inizia")),
             ])
         return make_view("/riepilogo", "Riepilogo elenco", [
-            ft.Text(f"Data: {elenco['data']}"),
+            ft.Text(f"Data: {data_visibile(elenco['data'])}"),
             ft.Text(f"Mercato: {elenco['giornata']}"),
             ft.Text(f"Luogo: {elenco['luogo']}"),
             ft.Text(f"Ditte da controllare: {len(elenco['ditte'])}"),
@@ -264,7 +264,7 @@ def main(page: ft.Page):
                 result = crea_esiti(elenco, presenti)
                 data = serialize(result)
                 path = await picker.save_file(
-                    file_name=f"sipa_esiti_{elenco['data']}_{elenco['elenco_id'][:8]}.json",
+                    file_name=f"sipa_esiti_{interpreta_data(elenco['data']).isoformat()}_{elenco['elenco_id'][:8]}.json",
                     file_type=ft.FilePickerFileType.CUSTOM,
                     allowed_extensions=["json"], src_bytes=data,
                 )
@@ -288,7 +288,7 @@ def main(page: ft.Page):
             padding=8,
         )
         view = make_view("/presenze", "Rilevazione presenze", [
-            ft.Text(f"{elenco['giornata']} — {elenco['data']}"),
+            ft.Text(f"{elenco['giornata']} — {data_visibile(elenco['data'])}"),
             ft.Text("Spuntare esclusivamente le ditte presenti."),
             ricerca, count, lista,
             ft.Button("Esporta sul dispositivo", icon=ft.Icons.SAVE_ALT, on_click=esporta),

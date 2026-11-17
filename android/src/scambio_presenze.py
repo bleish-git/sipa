@@ -33,11 +33,36 @@ def parse(raw):
     return item
 
 
-def _check_list(item):
+def interpreta_data(raw):
+    """Accetta GG/MM/AAAA (attuale), AAAA-MM-GG e AAAA/MM/GG (file legacy).
+
+    La data del documento non viene mai riscritta durante la lettura:
+    cambiare la rappresentazione modificherebbe l'impronta SHA-256.
+    """
+    if isinstance(raw, datetime):
+        return raw.date()
+    if isinstance(raw, date):
+        return raw
+    if not isinstance(raw, str):
+        raise ValueError('Data assente o non valida.')
+    raw = raw.strip()
+    for formato in ('%d/%m/%Y', '%Y-%m-%d', '%Y/%m/%d'):
+        try:
+            return datetime.strptime(raw, formato).date()
+        except ValueError:
+            pass
+    raise ValueError('Data non valida: usare GG/MM/AAAA.')
+
+
+def data_visibile(raw):
+    return interpreta_data(raw).strftime('%d/%m/%Y')
+
+
+def _check_list(item, avvisi=None):
     if item.get('tipo') != 'sipa_elenco_presenze' or not isinstance(item.get('elenco_id'), str):
         raise ValueError('Il file non è un elenco SIPA.')
     try:
-        date.fromisoformat(item['data'])
+        interpreta_data(item['data'])
         giornata = int(item['giornata_id'])
         ditte = item['ditte']
         if not isinstance(ditte, list) or not ditte or len(ditte) > 10000:
@@ -52,17 +77,19 @@ def _check_list(item):
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError('Elenco SIPA incompleto o non valido.') from exc
     if digest({k:v for k,v in item.items() if k!='impronta'}) != item.get('impronta'):
-        raise ValueError('Impronta dell’elenco non valida.')
+        if avvisi is None:
+            raise ValueError('Impronta dell’elenco non valida.')
+        avvisi.append('Impronta dell’elenco originale non corrispondente.')
     return item
 
 
-def leggi_elenco(raw):
-    return _check_list(parse(raw))
+def leggi_elenco(raw, avvisi=None):
+    return _check_list(parse(raw), avvisi=avvisi)
 
 
 def crea_elenco(giorno, giornata_id, luogo, descrizione_giornata, ditte):
     item = dict(tipo='sipa_elenco_presenze', versione_formato=FORMAT,
-                elenco_id=str(uuid4()), data=str(giorno), giornata_id=int(giornata_id),
+                elenco_id=str(uuid4()), data=data_visibile(giorno), giornata_id=int(giornata_id),
                 luogo=str(luogo), giornata=str(descrizione_giornata),
                 generato_il=datetime.now(timezone.utc).isoformat(), ditte=[
                     dict(assegnazione_id=int(d['assegnazione_id']), ditta_id=int(d['ditta_id']),
@@ -86,15 +113,23 @@ def crea_esiti(elenco, presenti):
     return item
 
 
-def leggi_esiti(raw):
+def leggi_esiti(raw, *, accetta_impronte_diverse=False, avvisi=None):
+    """Valida gli esiti. La deroga alle sole impronte richiede consenso esplicito.
+
+    Gli ID, i tipi, le presenze, la data e la corrispondenza con il DB
+    sono sempre controllati; non si modifica mai il JSON ricevuto.
+    """
+    rilievi = []
     item=parse(raw)
     if item.get('tipo') != 'sipa_esiti_presenze':
         raise ValueError('Il file non contiene esiti di presenza.')
-    elenco=leggi_elenco(_bytes(item.get('elenco')))
-    if item.get('elenco_id') != elenco['elenco_id'] or item.get('impronta_elenco') != elenco['impronta']:
-        raise ValueError('Gli esiti non corrispondono all’elenco.')
+    elenco=leggi_elenco(_bytes(item.get('elenco')), avvisi=rilievi if accetta_impronte_diverse else None)
+    if item.get('elenco_id') != elenco['elenco_id']:
+        raise ValueError('Identificativo degli esiti diverso da quello dell’elenco: importazione vietata.')
+    if item.get('impronta_elenco') != elenco['impronta']:
+        rilievi.append('Riferimento all’impronta dell’elenco diverso da quello incorporato.')
     if digest({k:v for k,v in item.items() if k!='impronta'})!=item.get('impronta'):
-        raise ValueError('Impronta del file esiti non valida.')
+        rilievi.append('Impronta SHA-256 del file esiti non corrispondente.')
     try:
         presenti=item['presenti']
         if not isinstance(presenti,list) or len(set(presenti))!=len(presenti):
@@ -104,6 +139,10 @@ def leggi_esiti(raw):
             raise ValueError()
     except (KeyError,TypeError,ValueError) as exc:
         raise ValueError('Elenco presenze non valido.') from exc
+    if rilievi and not accetta_impronte_diverse:
+        raise ValueError('Impronta non riconosciuta: importazione annullata.')
+    if avvisi is not None:
+        avvisi.extend(rilievi)
     return item
 
 

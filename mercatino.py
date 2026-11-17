@@ -419,18 +419,19 @@ def assenze_anno(uid,anno,ditta_id=None):
                      luogo=l.nome,giorno=r.giorno) for e,r,g,l in s.execute(q.order_by(Rilevazione.giorno,Luogo.nome))]
 
 
-def importa_esiti_mobile(uid, username, payload):
+def importa_esiti_mobile(uid, username, payload, *, accetta_impronte_diverse=False):
     """Importa SOLO una bozza da Android; rifiuta conflitti e confermate.
 
     Confronta l'elenco esportato con le assegnazioni attualmente previste,
     inclusi denominazione, posto e ordine. In presenza di modifiche richiede
     una nuova esportazione dal PC.
     """
-    from scambio_presenze import leggi_esiti, serialize
+    from scambio_presenze import leggi_esiti, serialize, interpreta_data
     _check(uid, 'mercatino.absence')
-    item=leggi_esiti(serialize(payload))
+    rilievi=[]
+    item=leggi_esiti(serialize(payload), accetta_impronte_diverse=accetta_impronte_diverse, avvisi=rilievi)
     elenco=item['elenco']
-    giorno=data_input(elenco['data'])
+    giorno=interpreta_data(elenco['data'])
     giornata_id=int(elenco['giornata_id'])
     snapshot=anteprima(uid,giorno,giornata_id)
     if snapshot['stato']=='Confermata':
@@ -445,5 +446,6 @@ def importa_esiti_mobile(uid, username, payload):
     ids=set(by_id(snapshot['ditte']))
     presenti=set(item['presenti'])
     salva_rilevazione(uid,username,giorno,giornata_id,presenti,ids,conferma=False,
-                     note='Importazione da SIPA Presenze Android, elenco '+elenco['elenco_id'])
+                     note='Importazione da SIPAdroid, elenco '+elenco['elenco_id'] +
+                     (' [DEROGA IMPRONTE: '+ '; '.join(rilievi) + ']' if rilievi else ''))
     return len(presenti)

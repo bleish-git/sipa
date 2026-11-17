@@ -544,7 +544,7 @@ def main(page: ft.Page):
              accertamenti, assenze_anno)
         from stampa_mercatino import (stampa_elenco,stampa_accertamento,
                                       stampa_assenze_ditta,stampa_assenze_generale)
-        from scambio_presenze import crea_elenco, leggi_esiti, serialize
+        from scambio_presenze import crea_elenco, leggi_esiti, serialize, data_visibile, interpreta_data
         from mercatino import importa_esiti_mobile
         uid=user['id']; username=user['username']
         can_edit=has_permission(uid,'mercatino.update'); can_create=has_permission(uid,'mercatino.create')
@@ -836,10 +836,10 @@ def main(page: ft.Page):
                     if not snapshot['ditte']:
                         raise ValueError('Nessuna ditta da rilevare.')
                     entry=next(x for x in sessions if x['id']==int(gd.value))
-                    payload=crea_elenco(data_input(day.value).isoformat(),int(gd.value),
+                    payload=crea_elenco(data_input(day.value),int(gd.value),
                                         entry['luogo'],entry['descrizione'],snapshot['ditte'])
                     target=await ft.FilePicker().save_file(
-                        file_name=f"sipa_lista_{payload['data']}_{payload['elenco_id'][:8]}.json",
+                        file_name=f"sipa_lista_{interpreta_data(payload['data']).isoformat()}_{payload['elenco_id'][:8]}.json",
                         file_type=ft.FilePickerFileType.CUSTOM,allowed_extensions=['json'],
                         src_bytes=serialize(payload))
                     if target:notify('Elenco esportato per SIPA Presenze Android.')
@@ -869,22 +869,43 @@ def main(page: ft.Page):
                     if not picked:return
                     f=picked[0]
                     raw=f.bytes if f.bytes else Path(f.path).read_bytes()
-                    imported=leggi_esiti(raw)
+                    avvisi=[]
+                    imported=leggi_esiti(raw, accetta_impronte_diverse=True, avvisi=avvisi)
                     elenco=imported['elenco']
                     preview=ft.Text(
-                        f"{elenco['data']} — {elenco['giornata']}\n"
+                        f"Data: {data_visibile(elenco['data'])} — {elenco['giornata']}\n"
                         f"Ditte: {len(elenco['ditte'])}, presenti: {len(imported['presenti'])}\n"
                         'Verificare data e mercato. Verrà creata/aggiornata una BOZZA, mai confermata.')
                     error=ft.Text(color=ft.Colors.RED_700)
+                    # Non si consente mai di bypassare identificativi o assegnazioni.
+                    # Solo i digest possono essere accettati espressamente dall'utente.
+                    deroga=ft.Checkbox(
+                        label='Confermo di voler importare nonostante le impronte differenti',
+                        value=False) if avvisi else None
+                    warning=ft.Text(
+                        'ATTENZIONE: il controllo di integrità SHA-256 non è superato.\n'
+                        + '\n'.join('• '+x for x in avvisi)
+                        + '\nVerificare la provenienza del file e le presenze. '
+                          'La deroga non prova l’autenticità del file.',
+                        color=ft.Colors.RED_700, selectable=True) if avvisi else None
                     def confirm_import(ev):
                         try:
-                            n=importa_esiti_mobile(uid,username,imported)
+                            if avvisi and not deroga.value:
+                                error.value='Spuntare la conferma esplicita per proseguire.'
+                                page.update()
+                                return
+                            n=importa_esiti_mobile(uid,username,imported,
+                                accetta_impronte_diverse=bool(avvisi and deroga.value))
                             page.pop_dialog()
                             load()
                             notify(f'Bozza importata: {n} presenze. Aprirla e verificare prima della conferma.')
                         except Exception as exc:error.value=str(exc);page.update()
+                    controls=[preview]
+                    if warning is not None:
+                        controls.extend([warning,deroga])
+                    controls.append(error)
                     dlg2=ft.AlertDialog(modal=True,title=ft.Text('Importa bozza da Android'),
-                        content=ft.Column([preview,error],tight=True,width=470),
+                        content=ft.Column(controls,tight=True,width=500,scroll=ft.ScrollMode.AUTO),
                         actions=[ft.TextButton('Annulla',on_click=lambda e:page.pop_dialog()),
                                  ft.Button('Importa come bozza',on_click=confirm_import)])
                     page.show_dialog(dlg2)
