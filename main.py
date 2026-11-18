@@ -968,15 +968,50 @@ def main(page: ft.Page):
                 notify('PDF creato: '+str(stampa_elenco(records,search.value,selected_places,state.value)))
             except Exception as exc:fail(exc)
         def print_accertamento(e=None):
-            day=date_field('Data accertamento');w=ft.Text(week(day.value))
-            places=m_luoghi(uid)
-            place=dropdown('Luogo',[(0,'Tutti i luoghi')]+[(p['id'],p['nome']) for p in places],0,440)
-            day.on_change=lambda e:(setattr(w,'value',week(day.value)),page.update())
-            def run():
-                rows=accertamenti(uid,day.value,int(place.value) or None)
-                path=stampa_accertamento(rows,data_input(day.value))
-                notify('Accertamento PDF: '+str(path))
-            dialog('Accertamento assenze per data e luogo',[day,w,place],run,button='Stampa PDF',height=250)
+            day = date_field('Data accertamento')
+            w = ft.Text(week(day.value))
+            places = m_luoghi(uid)
+            place = dropdown('Luogo', [(0, 'Tutti i luoghi')] +
+                             [(p['id'], p['nome']) for p in places], 0, 440)
+            error = ft.Text(color=ft.Colors.RED_700)
+
+            def update_day(e=None):
+                w.value = week(day.value)
+                page.update()
+
+            day.on_change = update_day
+
+            def export(fmt):
+                try:
+                    giorno = data_input(day.value)
+                    rows = accertamenti(uid, day.value, int(place.value or 0) or None)
+                    if fmt == 'word':
+                        from stampa_assenze_word import stampa_comunicazione_assenze
+                        target = stampa_comunicazione_assenze(rows, giorno)
+                        label = 'Comunicazione Word: '
+                    else:
+                        target = stampa_accertamento(rows, giorno)
+                        label = 'Accertamento PDF: '
+                    page.pop_dialog()
+                    notify(label + str(target))
+                except Exception as exc:
+                    error.value = str(exc)
+                    page.update()
+
+            dlg = ft.AlertDialog(
+                modal=True,
+                title=ft.Text('Accertamento assenze per data e luogo'),
+                content=ft.Column([day, w, place, error], width=550,
+                                  height=250, scroll=ft.ScrollMode.AUTO),
+                actions=[
+                    ft.TextButton('Annulla', on_click=lambda e: page.pop_dialog()),
+                    ft.OutlinedButton('Esporta Word', icon=ft.Icons.DESCRIPTION,
+                                      on_click=lambda e: export('word')),
+                    ft.Button('Stampa PDF', icon=ft.Icons.PRINT,
+                              on_click=lambda e: export('pdf')),
+                ],
+            )
+            page.show_dialog(dlg)
         def print_annual(pk=None):
             try:
                 value=int(year.value)
