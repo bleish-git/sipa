@@ -278,6 +278,13 @@ def main(page: ft.Page):
                 notifica("Esportazione non riuscita: " + str(exc), True)
 
         ricerca.on_change = filter_rows
+        # La vista e' costruita prima che venga montata nella pagina: popoliamo
+        # subito i controlli, senza aspettare il primo evento on_change.
+        # In seguito filter_rows() aggiornara' lo stesso elenco gia' visibile.
+        rows.controls = [
+            ft.Container(content=cb, padding=ft.Padding.symmetric(vertical=4))
+            for _, cb in checkboxes.values()
+        ]
         aggiorna_conteggio()
         # La lista occupa l'altezza residua e scorre al tocco senza altezza fissa.
         lista = ft.Container(
